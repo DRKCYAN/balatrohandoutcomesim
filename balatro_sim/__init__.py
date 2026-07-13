@@ -8,7 +8,26 @@ from .evaluator import (
     best_of,
     evaluate,
 )
-from .simulate import Phase1Report, deal, run_phase1, se, trial_rng
+from .experiment import PairedResult, at_least, paired_experiment
+from .policy import (
+    POLICY_NAMES,
+    BlindDiscard,
+    FlushChaser,
+    MadeHand,
+    NoDiscard,
+    Policy,
+    get_policy,
+)
+from .simulate import (
+    DistributionReport,
+    Phase1Report,
+    deal,
+    play_out,
+    run_distribution,
+    run_phase1,
+    se,
+    trial_rng,
+)
 
 __all__ = [
     "CHIP_VALUE",
@@ -22,8 +41,21 @@ __all__ = [
     "best_from_availability",
     "best_of",
     "evaluate",
+    "PairedResult",
+    "at_least",
+    "paired_experiment",
+    "POLICY_NAMES",
+    "BlindDiscard",
+    "FlushChaser",
+    "MadeHand",
+    "NoDiscard",
+    "Policy",
+    "get_policy",
+    "DistributionReport",
     "Phase1Report",
     "deal",
+    "play_out",
+    "run_distribution",
     "run_phase1",
     "se",
     "trial_rng",

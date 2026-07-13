@@ -12,7 +12,8 @@ Pure Python, stdlib only (3.9+). CLI + printed distributions by design — no UI
 
 - [x] **Phase 1 — hand-type distribution** (evaluator, `best_of`, seeded trial
       loop; validated, see below)
-- [ ] Phase 2 — discards + policy π
+- [x] **Phase 2 — discards + policy π** (two contrasting heuristics, paired
+      CRN comparisons; validated, see below)
 - [ ] Phase 3 — scoring layer (chips × mult, hand levels) → P(S ≥ B)
 - [ ] Phase 4 — deck modifications (tarots as deck edits)
 - [ ] Phase 5 — jokers (~10, mechanically diverse)
@@ -22,11 +23,32 @@ Pure Python, stdlib only (3.9+). CLI + printed distributions by design — no UI
 
 ```
 python -m balatro_sim --trials 100000 --seed 42
+python -m balatro_sim --policy flushchaser --discards 3 --trials 20000
+python -m balatro_sim compare --a none --b flushchaser --stat flush --discards 3 --trials 100000
 ```
 
-Prints the distribution of the best playable hand type in 8 dealt cards
-(vanilla deck, no discards), each estimate with its standard error, and a
-self-validation block comparing the run against exact math.
+The first prints the distribution of the best playable hand type in 8 dealt
+cards (vanilla deck, no discards), each estimate with its standard error, and
+a self-validation block comparing the run against exact math. The second runs
+the same distribution under a discard policy. The third is a paired
+common-random-numbers comparison: both arms replay identical shuffles, and the
+report gives p_A, p_B, Δ̂ ± SE, the 95% CI, and the flip counts where the
+signal lives.
+
+### Policies (π)
+
+Deterministic, RNG-free, pinned by tests — the sim measures build and policy
+jointly, so π is part of the measured object (PLAN.md §7):
+
+- `none` — never discards (baseline; reproduces Phase 1 trial-for-trial).
+- `madehand` — stands pat on straight-or-better; otherwise keeps trips/both
+  pairs/pair+top-kicker/3 highest cards and discards the rest. Deliberately
+  does not chase draws.
+- `flushchaser` — keeps the most-populated suit, discards up to 5 off-suit
+  (lowest first) until a flush lands.
+- `blind` — discards the first k positions sight-unseen (validation only:
+  content-blind discarding leaves the final 8 uniform, so its distribution
+  must still match the exact math).
 
 ## Test
 
@@ -44,11 +66,16 @@ Set `BALATRO_SKIP_SLOW=1` to skip the exhaustive 2.6M-hand evaluator check
 | `balatro_sim/cards.py` | `Card`, parsing (`hand("AS KH 10D")`), `vanilla_deck()` |
 | `balatro_sim/evaluator.py` | `HandType` (Balatro taxonomy incl. secret hands), `evaluate()`, `best_of()` (naive 218-subset enumeration, per contract), `availability()` cross-check |
 | `balatro_sim/exact.py` | Hand-derived exact probabilities (Fractions). Self-contained on purpose: shares no code with the simulator, so agreement is evidence. |
-| `balatro_sim/simulate.py` | Seeded trial loop. Per-trial seeding `Random(f"{seed}:{i}")` — SHA-512 string seeds, platform-stable, the CRN hook for later phases. |
-| `balatro_sim/__main__.py` | Phase 1 CLI |
-| `tests/` | Unit cases, exhaustive 5-card canon, exact-math consistency, MC-vs-exact gate |
+| `balatro_sim/policy.py` | The discard policies above, behind a minimal `Policy` protocol (`discard(hand, discards_left) -> indices`). |
+| `balatro_sim/exact_discard.py` | Conditional hypergeometric ground truth for single-discard states (4-flush completion, pair→trips). Same zero-import discipline as `exact.py`. |
+| `balatro_sim/simulate.py` | Seeded trial loop + `play_out` discard mechanics. Per-trial seeding `Random(f"{seed}:{i}")` — SHA-512 string seeds, platform-stable, the CRN hook. |
+| `balatro_sim/experiment.py` | `paired_experiment`: both arms share each trial's shuffle (CRN); reports Δ̂, SE, CI and flip counts. |
+| `balatro_sim/__main__.py` | CLI: distribution + `compare` |
+| `tests/` | Unit cases, exhaustive 5-card canon, exact-math consistency, MC-vs-exact gates, policy pins, discard-mechanics gates, paired-estimator gates |
 
-## How Phase 1 is validated
+## How it is validated
+
+Phase 1 (uniform deal):
 
 1. **Exhaustive canon** — `evaluate()` over all C(52,5) = 2,598,960 hands
    reproduces the canonical poker frequencies to the digit (royal 4, straight
@@ -60,4 +87,20 @@ Set `BALATRO_SKIP_SLOW=1` to skip the exhaustive 2.6M-hand evaluator check
 3. **Per-trial cross-check** — every trial, `best_of()` (subset enumeration) is
    compared with an independent whole-hand counting implementation; the two
    must agree exactly. Any mismatch is counted and reported by every CLI run.
+
+Phase 2 (discards), where no global closed form exists:
+
+4. **Blind-discard invariance** — a content-blind policy leaves the final 8 a
+   uniform subset, so the full Phase 1 exact-math gate must still pass through
+   the discard/redraw machinery.
+5. **Conditional hypergeometrics** — in fully specified single-discard states
+   (kept exactly 4 suited and drew 4; kept a pair and drew 5) the redraw is a
+   plain hypergeometric draw from the 44 unseen cards; conditioned MC trials
+   must match `exact_discard.py` within 4.5 SE.
+6. **CRN identities** — a policy compared against itself must give Δ̂ = 0 with
+   SE = 0 and zero flips *exactly*; paired arm means must equal the
+   corresponding distribution-run tail probabilities *exactly* (same seeds,
+   same trials).
+7. **NoDiscard ≡ Phase 1** trial-for-trial, and monotonicity: FlushChaser's
+   flush rate must strictly rise with each added discard.
 # balatrohandoutcomesim
