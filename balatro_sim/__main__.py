@@ -1,4 +1,4 @@
-"""CLI. Two commands:
+"""CLI. Four commands:
 
 Distribution (default):
     python -m balatro_sim --trials 100000 --seed 42
@@ -8,12 +8,22 @@ Paired comparison (common random numbers):
     python -m balatro_sim compare --a none --b flushchaser --stat flush \
         --discards 3 --trials 100000
 
-Output is ASCII-only (Windows console safe). Every distribution run is
-self-validating: it reports per-trial cross-check mismatches (must be 0)
-and, when the final-hand distribution is provably uniform (policy none
-or blind), z-scores against the exact math in exact.py. Policy-shaped
-distributions (madehand/flushchaser) have no closed form, so those
-columns are omitted rather than faked.
+Trial replay (self-contained HTML, open in any browser):
+    python -m balatro_sim trace --policy madehand --discards 3 --trials 12 \
+        --out trace.html
+
+Charts (PNG; needs matplotlib, the only optional dependency):
+    python -m balatro_sim plot dist --policies none madehand flushchaser
+    python -m balatro_sim plot converge --policy flushchaser --stat flush
+    python -m balatro_sim plot discards --policies madehand flushchaser
+    python -m balatro_sim plot flips --a none --b flushchaser --stat flush
+
+Terminal output is ASCII-only (Windows console safe). Every distribution
+run is self-validating: it reports per-trial cross-check mismatches
+(must be 0) and, when the final-hand distribution is provably uniform
+(policy none or blind), z-scores against the exact math in exact.py.
+Policy-shaped distributions (madehand/flushchaser) have no closed form,
+so those columns are omitted rather than faked.
 """
 from __future__ import annotations
 
@@ -199,10 +209,102 @@ def _cmd_compare(argv: list[str]) -> int:
     return 0
 
 
+def _cmd_trace(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(
+        prog="balatro_sim trace",
+        description="Replay trials as a self-contained HTML file.",
+    )
+    ap.add_argument("--policy", choices=POLICY_NAMES, default="madehand")
+    ap.add_argument("--discards", type=int, default=3, help="default 3")
+    ap.add_argument("--trials", type=int, default=12,
+                    help="how many trials to replay (default 12)")
+    ap.add_argument("--seed", type=int, default=42, help="default 42")
+    ap.add_argument("--out", default="trace.html", help="default trace.html")
+    args = ap.parse_args(argv)
+
+    from .trace import render_trace_html
+
+    render_trace_html(
+        vanilla_deck(), args.seed, args.trials, get_policy(args.policy),
+        args.discards, args.out,
+    )
+    print(f"wrote {args.out}: trials 0-{args.trials - 1}, policy={args.policy}, "
+          f"discards={args.discards}, seed={args.seed}")
+    print("open it in a browser; these are the exact trials the statistics count.")
+    return 0
+
+
+def _cmd_plot(argv: list[str]) -> int:
+    kinds = ("dist", "converge", "discards", "flips")
+    if not argv or argv[0] not in kinds:
+        print(f"usage: python -m balatro_sim plot {{{','.join(kinds)}}} [options]")
+        return 2
+    kind, rest = argv[0], argv[1:]
+    ap = argparse.ArgumentParser(prog=f"balatro_sim plot {kind}")
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--discards", type=int, default=3)
+    ap.add_argument("--stat", choices=sorted(_STAT_TYPES), default="flush")
+    ap.add_argument("--out", default=f"{kind}.png")
+    if kind == "dist":
+        ap.add_argument("--policies", nargs="+", choices=POLICY_NAMES,
+                        default=["none", "madehand", "flushchaser"])
+        ap.add_argument("--trials", type=int, default=20_000)
+    elif kind == "converge":
+        ap.add_argument("--policy", choices=POLICY_NAMES, default="flushchaser")
+        ap.add_argument("--trials", type=int, default=20_000)
+    elif kind == "discards":
+        ap.add_argument("--policies", nargs="+", choices=POLICY_NAMES,
+                        default=["madehand", "flushchaser"])
+        ap.add_argument("--max-discards", type=int, default=3)
+        ap.add_argument("--trials", type=int, default=4_000,
+                        help="per point (default 4000)")
+    else:  # flips
+        ap.add_argument("--a", choices=POLICY_NAMES, required=True)
+        ap.add_argument("--b", choices=POLICY_NAMES, required=True)
+        ap.add_argument("--trials", type=int, default=2_500)
+    args = ap.parse_args(rest)
+
+    from . import charts
+
+    deck = vanilla_deck()
+    target = _STAT_TYPES[args.stat]
+    print(f"plotting {kind} -> {args.out} ...", flush=True)
+    if kind == "dist":
+        reports = []
+        for name in args.policies:
+            print(f"  simulating {name} (n={args.trials:,}) ...", flush=True)
+            reports.append(run_distribution(
+                deck, args.trials, args.seed,
+                policy=get_policy(name), discards=args.discards,
+            ))
+        charts.distribution_chart(reports, args.out)
+    elif kind == "converge":
+        charts.convergence_chart(
+            get_policy(args.policy), args.discards, args.trials, args.seed,
+            target, args.out, deck=deck,
+        )
+    elif kind == "discards":
+        charts.discards_curve(
+            [get_policy(p) for p in args.policies], args.max_discards,
+            args.trials, args.seed, target, args.out, deck=deck,
+        )
+    else:
+        charts.flip_grid(
+            get_policy(args.a), get_policy(args.b), args.discards,
+            args.trials, args.seed, target, args.out, deck=deck,
+        )
+    print(f"wrote {args.out}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:]) if argv is None else list(argv)
     if argv and argv[0] == "compare":
         return _cmd_compare(argv[1:])
+    if argv and argv[0] == "trace":
+        return _cmd_trace(argv[1:])
+    if argv and argv[0] == "plot":
+        return _cmd_plot(argv[1:])
     return _cmd_dist(argv)
 
 

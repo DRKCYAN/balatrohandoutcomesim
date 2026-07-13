@@ -8,7 +8,7 @@ from .evaluator import (
     best_of,
     evaluate,
 )
-from .experiment import PairedResult, at_least, paired_experiment
+from .experiment import PairedResult, at_least, paired_experiment, paired_samples
 from .policy import (
     POLICY_NAMES,
     BlindDiscard,
@@ -19,6 +19,7 @@ from .policy import (
     get_policy,
 )
 from .simulate import (
+    DiscardStep,
     DistributionReport,
     Phase1Report,
     deal,
@@ -28,6 +29,7 @@ from .simulate import (
     se,
     trial_rng,
 )
+from .trace import TrialReplay, render_trace_html, replay_trial
 
 __all__ = [
     "CHIP_VALUE",
@@ -44,6 +46,7 @@ __all__ = [
     "PairedResult",
     "at_least",
     "paired_experiment",
+    "paired_samples",
     "POLICY_NAMES",
     "BlindDiscard",
     "FlushChaser",
@@ -51,6 +54,7 @@ __all__ = [
     "NoDiscard",
     "Policy",
     "get_policy",
+    "DiscardStep",
     "DistributionReport",
     "Phase1Report",
     "deal",
@@ -59,4 +63,7 @@ __all__ = [
     "run_phase1",
     "se",
     "trial_rng",
+    "TrialReplay",
+    "render_trace_html",
+    "replay_trial",
 ]

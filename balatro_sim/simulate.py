@@ -45,6 +45,15 @@ def deal(deck: Sequence[Card], rng: random.Random, k: int = 8) -> list[Card]:
     return cards[:k]
 
 
+@dataclass(frozen=True)
+class DiscardStep:
+    """One discard round, as recorded by play_out(trace=...)."""
+
+    hand_before: tuple[Card, ...]
+    discarded_indices: tuple[int, ...]  # ascending
+    drawn: tuple[Card, ...]  # replacement cards, in the order they landed
+
+
 def _validate_discard(idx: tuple[int, ...], hand_len: int) -> None:
     if not 1 <= len(idx) <= 5:
         raise ValueError(f"a discard is 1-5 cards, policy returned {len(idx)}")
@@ -59,11 +68,17 @@ def play_out(
     policy: Policy,
     discards: int,
     hand_size: int = 8,
+    trace: Optional[list] = None,
 ) -> tuple[Card, ...]:
     """Deal the top hand_size of an already-shuffled deck, then let the
     policy spend up to `discards` discards. Returns the final hand.
 
     Does not mutate `shuffled`, so paired arms can share one shuffle.
+
+    If `trace` is a list, one DiscardStep per round is appended to it --
+    the replay hook (trace.py). Same loop either way, so a traced replay
+    cannot diverge from what the hot path did; the hot path (trace=None)
+    allocates nothing extra.
     """
     hand = list(shuffled[:hand_size])
     draw = hand_size  # index of the next card off the top
@@ -75,9 +90,18 @@ def play_out(
         _validate_discard(idx, len(hand))
         if draw + len(idx) > len(shuffled):
             raise RuntimeError("deck exhausted during redraw")
-        for j in sorted(idx):
-            hand[j] = shuffled[draw]
-            draw += 1
+        if trace is None:
+            for j in sorted(idx):
+                hand[j] = shuffled[draw]
+                draw += 1
+        else:
+            before = tuple(hand)
+            drawn = []
+            for j in sorted(idx):
+                hand[j] = shuffled[draw]
+                drawn.append(shuffled[draw])
+                draw += 1
+            trace.append(DiscardStep(before, tuple(sorted(idx)), tuple(drawn)))
         left -= 1
     return tuple(hand)
 

@@ -6,7 +6,9 @@ differences of clear probabilities (ΔP_win) estimated with common-random-number
 paired trials. The full rationale, component contracts, phase roadmap and
 validation protocol live in [PLAN.md](PLAN.md); read that first.
 
-Pure Python, stdlib only (3.9+). CLI + printed distributions by design — no UI.
+Pure Python, stdlib only (3.9+); `matplotlib` is the one *optional* dependency,
+needed only for the `plot` command. CLI + printed distributions + static
+visual reports by design — no UI.
 
 ## Status
 
@@ -50,6 +52,28 @@ jointly, so π is part of the measured object (PLAN.md §7):
   content-blind discarding leaves the final 8 uniform, so its distribution
   must still match the exact math).
 
+### Visualize
+
+```
+python -m balatro_sim trace --policy flushchaser --discards 3 --trials 12 --out trace.html
+python -m balatro_sim plot dist --policies none madehand flushchaser --out dist.png
+python -m balatro_sim plot converge --policy flushchaser --stat flush --out converge.png
+python -m balatro_sim plot discards --policies madehand flushchaser --out discards.png
+python -m balatro_sim plot flips --a none --b flushchaser --stat flush --out flips.png
+```
+
+`trace` writes a self-contained HTML replay (no dependencies, open in any
+browser): each trial shows the dealt cards, what the policy threw away
+(dimmed), what it drew (blue border), and the cards `best_of` would play
+(gold border). Because trials are seeded, these are the *exact* hands the
+statistics counted, not illustrations.
+
+`plot` (requires `pip install matplotlib`) renders PNGs: the best-hand
+distribution by policy with 95% CIs, a convergence curve showing the CI band
+shrinking as 1/√n, the value-of-a-discard curve, and the CRN flip grid —
+one cell per paired trial, where the green/red imbalance *is* the estimator's
+signal.
+
 ## Test
 
 ```
@@ -70,7 +94,9 @@ Set `BALATRO_SKIP_SLOW=1` to skip the exhaustive 2.6M-hand evaluator check
 | `balatro_sim/exact_discard.py` | Conditional hypergeometric ground truth for single-discard states (4-flush completion, pair→trips). Same zero-import discipline as `exact.py`. |
 | `balatro_sim/simulate.py` | Seeded trial loop + `play_out` discard mechanics. Per-trial seeding `Random(f"{seed}:{i}")` — SHA-512 string seeds, platform-stable, the CRN hook. |
 | `balatro_sim/experiment.py` | `paired_experiment`: both arms share each trial's shuffle (CRN); reports Δ̂, SE, CI and flip counts. |
-| `balatro_sim/__main__.py` | CLI: distribution + `compare` |
+| `balatro_sim/trace.py` | HTML trial replay (self-contained, zero deps). Steps come from `play_out`'s own trace hook, so replays cannot diverge from what was measured. |
+| `balatro_sim/charts.py` | matplotlib PNGs (distribution, convergence, discards curve, CRN flip grid); validated colorblind-safe palette. |
+| `balatro_sim/__main__.py` | CLI: distribution + `compare` + `trace` + `plot` |
 | `tests/` | Unit cases, exhaustive 5-card canon, exact-math consistency, MC-vs-exact gates, policy pins, discard-mechanics gates, paired-estimator gates |
 
 ## How it is validated

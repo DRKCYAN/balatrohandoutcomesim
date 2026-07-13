@@ -53,6 +53,31 @@ class PairedResult:
         return (self.delta - 1.96 * self.se, self.delta + 1.96 * self.se)
 
 
+def paired_samples(
+    deck: Sequence[Card],
+    n: int,
+    seed: int,
+    policy_a: Policy,
+    policy_b: Policy,
+    discards: int,
+    statistic: Statistic,
+) -> list[tuple[float, float]]:
+    """Per-trial (x_a, x_b) pairs under CRN -- the raw material for
+    visualisations (flip grids, convergence). Same trial streams as
+    paired_experiment, so summaries computed from this list must equal
+    its estimates exactly (pinned by tests). Materialises n pairs; for
+    plain estimation at large n use paired_experiment, which streams.
+    """
+    out: list[tuple[float, float]] = []
+    for i in range(n):
+        shuffled = list(deck)
+        trial_rng(seed, i).shuffle(shuffled)
+        x_a = float(statistic(best_of(play_out(shuffled, policy_a, discards))[0]))
+        x_b = float(statistic(best_of(play_out(shuffled, policy_b, discards))[0]))
+        out.append((x_a, x_b))
+    return out
+
+
 def paired_experiment(
     deck: Sequence[Card],
     n: int,
