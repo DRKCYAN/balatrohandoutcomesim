@@ -128,5 +128,14 @@ shrinking as 1/√n, the value-of-a-discard curve, and the CRN flip grid —
 one cell per paired trial, where the green/red imbalance *is* the estimator's
 signal.
 
-(~15 s). `python -m pytest` works too if you have pytest.
+## Test
+
+```
+python -m unittest discover -s tests -t . -v
+```
+
+Set `BALATRO_SKIP_SLOW=1` to skip the exhaustive 2.6M-hand evaluator check
+(~15 s). `python -m pytest` works too if you have pytest. Every simulation
+run also self-validates: 0 cross-check mismatches and small z-scores against
+the exact combinatorics are the expected signature of a correct simulator.
 
