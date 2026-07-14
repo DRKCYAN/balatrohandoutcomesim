@@ -18,6 +18,7 @@ Here are my results so far(1 hand 3 discards so this doesn't treat the other han
 - MadeHand quietly converts ~52% of hands into full houses.
 - Against blind 600 at level 1, MadeHand clears 2.8% vs FlushChaser's 1.9% (Δ̂ = −0.0089 ± 0.0007, n = 100k) — the flush wall tops out at ~340 and never reaches 600; clears come from quads and straight flushes. The 92%-flush policy loses on the objective that matters(This genuinely surprised me especially since this specific simulation has only 1 hand). 
 
+Also I used mathplotlib to visualize the data
 
 
 
