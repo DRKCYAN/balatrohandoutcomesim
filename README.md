@@ -2,11 +2,21 @@ If you are an admissions officer or someone checking my resume, read this. If yo
 
 Balatro is a roguelike deckbuilder where you use poker hands and wild Joker modifiers to hit increasingly massive score requirements. The entire game is a high-stakes balancing act of risk and reward, forcing you to constantly gamble your hard-earned cash on unpredictable booster packs and destructive abilities. You must boldly manipulate your deck and wager on game-breaking synergies to survive, knowing that one wrong bet or bad draw could instantly end your run.
 
-Searching the internet, I saw that there were already score calculators(deterministic) which could tell your max score in a given hand. However for a game like Balatro where risk management and chance play a heavy role, I was surprised to see that there were no stochastic process/calculator to answer this question: given this deck and this policy, what is the distribution of outcomes, and specifically, what is the probability of failing to clear a blind?
+Searching the internet, I saw that there were already score calculators(deterministic) which could tell your max score in a given hand. However for a game like Balatro where risk management and chance play a heavy role, I was surprised to see that there were no stochastic process/calculator to answer this question: given this deck and this policy, what is the distribution of outcomes, and specifically, what is the probability of failing to clear a blind?(Inspiration was when I got done dirty by luck using all discards for a flush which never came).
 
+Here is the math I used:
+1. Treat the run as a random variable. Fix a deck, a play policy(defined as the strategy the user is chasing -- for instance, flushGreedy), a joker set. One trial = shuffle, deal 8, discard and redraw per the policy, play the best hand, score it. That score is a random draw. Do it 500,000 times and you have a distribution instead of a guess.
+2. The estimator. Each trial is a coin flip: did I clear the blind or not? That's a Bernoulli variable, so the win rate is just successes ÷ trials. The Law of Large Numbers says that average converges to the true probability.
+3. Standard error shrinks as 1/√n — so 4x the trials buys you only 2x the precision. I use Wilson score intervals rather than the textbook normal approximation, because win rates near 0 or 1 break the formula.
+4. I check my work using combinatorics. The five-card hand probabilities are exactly computable (a flush is 0.198% — derived by hand, not simulated). If the simulator doesn't reproduce them within the interval given enougn trials, the simulator is wrong. My goal is to scale this project so that it can include more complex situtiations to the point where combinatrics is less efficient than simply running a few 100k to million trials.
 
- 
+I used claude code to code it, but the logic, variabales, and math is all done by me. I also built an AI agent so that after a simulation is run, it automatically calculates the combinatrics and tells me how far the simulation was off mathematically.
 
+Here are my results so far(1 hand 3 discards so this doesn't treat the other hands like discards contrary to normal balatro gameplay. I'll fix this later):
+- P(straight even available in 8 cards) is only 0.098(also confirmed by exact math). This is lower than intuition says and surprised me.
+- FlushChaser turns 7% flushes into 92%, and multiplies straight/royal flushes ~23× as a side effect.
+- MadeHand quietly converts ~52% of hands into full houses.
+- Against blind 600 at level 1, MadeHand clears 2.8% vs FlushChaser's 1.9% (Δ̂ = −0.0089 ± 0.0007, n = 100k) — the flush wall tops out at ~340 and never reaches 600; clears come from quads and straight flushes. The 92%-flush policy loses on the objective that matters(This genuinely surprised me especially since this specific simulation has only 1 hand). 
 
 
 
