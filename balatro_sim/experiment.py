@@ -11,27 +11,84 @@ Sign convention: delta = p_b - p_a ("B minus A"; positive means arm B is
 better on the statistic). PLAN.md's Delta = p_with - p_without maps to
 a = without, b = with.
 
-Phase 2 statistics are indicators over the best hand type (at_least);
-Phase 3 will swap in score-threshold indicators without changing the
-estimator.
+Statistics are functions of a PlayResult (the played hand's type and,
+when levels were supplied, its score) -- the PLAN.md section 10 shape:
+joker value will be a delta on P(S >= B) through this same estimator.
+
+  - at_least(t): indicator on the hand type.
+  - score_at_least(B): indicator on the score; requires levels=.
+
+Arm semantics: without levels, each arm plays the type-max best_of hand
+(Phase 1/2 behaviour, coherence-pinned to run_distribution's counts).
+With levels, each arm plays the score-max best_play hand -- the optimal
+greedy player -- matching run_distribution's scores exactly.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from math import sqrt
-from typing import Callable, Sequence
+from typing import Callable, Optional, Sequence
 
 from .cards import Card
 from .evaluator import HandType, best_of
 from .policy import Policy
+from .scoring import Levels, PlayResult, best_play
 from .simulate import play_out, trial_rng
 
-Statistic = Callable[[HandType], float]
+Statistic = Callable[[PlayResult], float]
 
 
 def at_least(t: HandType) -> Statistic:
-    """Indicator: best playable hand type is t or better."""
-    return lambda best: 1.0 if best >= t else 0.0
+    """Indicator: the played hand's type is t or better."""
+    return lambda pr: 1.0 if pr.hand_type >= t else 0.0
+
+
+def score_at_least(blind: float) -> Statistic:
+    """Indicator: the played hand scores blind or more. The experiment
+    must be run with levels= (else there is no score to threshold)."""
+
+    def stat(pr: PlayResult) -> float:
+        if pr.score is None:
+            raise ValueError(
+                "score_at_least needs a scored run: pass levels= (e.g. {}) "
+                "to paired_experiment/paired_samples"
+            )
+        return 1.0 if pr.score >= blind else 0.0
+
+    return stat
+
+
+def _play(final: tuple[Card, ...], levels: Optional[Levels]) -> PlayResult:
+    if levels is None:
+        t, played = best_of(final)
+        return PlayResult(t, played, None)
+    return best_play(final, levels)
+
+
+def paired_samples(
+    deck: Sequence[Card],
+    n: int,
+    seed: int,
+    policy_a: Policy,
+    policy_b: Policy,
+    discards: int,
+    statistic: Statistic,
+    levels: Optional[Levels] = None,
+) -> list[tuple[float, float]]:
+    """Per-trial (x_a, x_b) pairs under CRN -- the raw material for
+    visualisations (flip grids, convergence). Same trial streams as
+    paired_experiment, so summaries computed from this list must equal
+    its estimates exactly (pinned by tests). Materialises n pairs; for
+    plain estimation at large n use paired_experiment, which streams.
+    """
+    out: list[tuple[float, float]] = []
+    for i in range(n):
+        shuffled = list(deck)
+        trial_rng(seed, i).shuffle(shuffled)
+        x_a = float(statistic(_play(play_out(shuffled, policy_a, discards), levels)))
+        x_b = float(statistic(_play(play_out(shuffled, policy_b, discards), levels)))
+        out.append((x_a, x_b))
+    return out
 
 
 @dataclass
@@ -53,31 +110,6 @@ class PairedResult:
         return (self.delta - 1.96 * self.se, self.delta + 1.96 * self.se)
 
 
-def paired_samples(
-    deck: Sequence[Card],
-    n: int,
-    seed: int,
-    policy_a: Policy,
-    policy_b: Policy,
-    discards: int,
-    statistic: Statistic,
-) -> list[tuple[float, float]]:
-    """Per-trial (x_a, x_b) pairs under CRN -- the raw material for
-    visualisations (flip grids, convergence). Same trial streams as
-    paired_experiment, so summaries computed from this list must equal
-    its estimates exactly (pinned by tests). Materialises n pairs; for
-    plain estimation at large n use paired_experiment, which streams.
-    """
-    out: list[tuple[float, float]] = []
-    for i in range(n):
-        shuffled = list(deck)
-        trial_rng(seed, i).shuffle(shuffled)
-        x_a = float(statistic(best_of(play_out(shuffled, policy_a, discards))[0]))
-        x_b = float(statistic(best_of(play_out(shuffled, policy_b, discards))[0]))
-        out.append((x_a, x_b))
-    return out
-
-
 def paired_experiment(
     deck: Sequence[Card],
     n: int,
@@ -86,6 +118,7 @@ def paired_experiment(
     policy_b: Policy,
     discards: int,
     statistic: Statistic,
+    levels: Optional[Levels] = None,
 ) -> PairedResult:
     """Estimate delta = E[stat under B] - E[stat under A] with CRN pairing.
 
@@ -99,8 +132,8 @@ def paired_experiment(
     for i in range(n):
         shuffled = list(deck)
         trial_rng(seed, i).shuffle(shuffled)
-        x_a = float(statistic(best_of(play_out(shuffled, policy_a, discards))[0]))
-        x_b = float(statistic(best_of(play_out(shuffled, policy_b, discards))[0]))
+        x_a = float(statistic(_play(play_out(shuffled, policy_a, discards), levels)))
+        x_b = float(statistic(_play(play_out(shuffled, policy_b, discards), levels)))
         d = x_b - x_a
         sum_a += x_a
         sum_b += x_b

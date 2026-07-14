@@ -27,6 +27,7 @@ from .cards import Card, vanilla_deck
 from .evaluator import HandType, best_of
 from .experiment import at_least, paired_samples
 from .policy import Policy
+from .scoring import Levels
 from .simulate import DistributionReport, play_out, run_distribution, trial_rng
 
 # categorical slots (light mode) -- fixed per policy, never cycled
@@ -151,7 +152,6 @@ def convergence_chart(
         raise ValueError("convergence needs at least 20 trials")
     if deck is None:
         deck = vanilla_deck()
-    stat = at_least(target)
     hits = 0
     xs, ps, los, his = [], [], [], []
     checkpoints = sorted({max(20, round(20 * (n / 20) ** (k / 239))) for k in range(240)})
@@ -160,7 +160,8 @@ def convergence_chart(
     for i in range(n):
         shuffled = list(deck)
         trial_rng(seed, i).shuffle(shuffled)
-        hits += stat(best_of(play_out(shuffled, policy, discards))[0])
+        if best_of(play_out(shuffled, policy, discards))[0] >= target:
+            hits += 1
         if i + 1 == nxt:
             p = hits / (i + 1)
             half = 1.96 * sqrt(p * (1 - p) / (i + 1))
@@ -222,6 +223,52 @@ def discards_curve(
     ax.legend(frameon=False, fontsize=9, labelcolor=_INK2, loc="upper left")
     _finish(fig, ax, f"What a discard is worth — P(best ≥ {target.display})",
             f"vanilla deck, whiskers = 95% CI, n = {n:,} per point, seed = {seed}",
+            out_path)
+
+
+def score_cdf(
+    policies: Sequence[Policy],
+    discards: int,
+    n: int,
+    seed: int,
+    levels: Levels,
+    blind: Optional[float],
+    out_path: str,
+    deck: Optional[Sequence[Card]] = None,
+) -> None:
+    """The project's destination chart (PLAN.md section 6): the empirical
+    CDF of the best-play score, one fixed-colour curve per policy, with
+    the blind requirement as a vertical line. P(clear) is the height of
+    the gap above each curve at that line; the left tail -- the thing the
+    mean hides -- is the bottom of the plot. Log-x because scoring is
+    multiplicative."""
+    plt = _plt()
+    if deck is None:
+        deck = vanilla_deck()
+    fig, ax = plt.subplots(figsize=(7.5, 4.6))
+    _style(fig, ax, grid_axis="y")
+    for policy in policies:
+        rep = run_distribution(
+            deck, n, seed, policy=policy, discards=discards, levels=levels
+        )
+        xs = sorted(rep.scores)
+        ys = [(i + 1) / n for i in range(n)]
+        label = policy.name
+        if blind is not None:
+            label += f" — P(≥{blind:g}) = {rep.p_score_at_least(blind):.3f}"
+        ax.plot(xs, ys, color=_policy_color(policy.name), linewidth=2,
+                drawstyle="steps-post", label=label)
+    if blind is not None:
+        ax.axvline(blind, color=_INK, linewidth=1.2, linestyle=(0, (4, 3)))
+        ax.annotate(f"blind {blind:g}", (blind, 0.02), xytext=(6, 0),
+                    textcoords="offset points", color=_INK2, fontsize=9)
+    ax.set_xscale("log")
+    ax.set_ylim(0, 1.02)
+    ax.set_xlabel("score of best play, single hand (log scale)", color=_INK2, fontsize=9)
+    ax.set_ylabel("P(S ≤ s)", color=_INK2, fontsize=9)
+    ax.legend(frameon=False, fontsize=9, labelcolor=_INK2, loc="upper left")
+    _finish(fig, ax, "Score distribution (CDF) by policy",
+            f"vanilla deck, {discards} discards, n = {n:,} per policy, seed = {seed}",
             out_path)
 
 

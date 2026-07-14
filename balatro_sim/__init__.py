@@ -8,7 +8,23 @@ from .evaluator import (
     best_of,
     evaluate,
 )
-from .experiment import PairedResult, at_least, paired_experiment, paired_samples
+from .experiment import (
+    PairedResult,
+    at_least,
+    paired_experiment,
+    paired_samples,
+    score_at_least,
+)
+from .scoring import (
+    LEVEL_INCREMENTS,
+    Levels,
+    PlayResult,
+    best_play,
+    effective_level,
+    hand_base_at,
+    score,
+    scoring_cards,
+)
 from .policy import (
     POLICY_NAMES,
     BlindDiscard,
@@ -47,6 +63,15 @@ __all__ = [
     "at_least",
     "paired_experiment",
     "paired_samples",
+    "score_at_least",
+    "LEVEL_INCREMENTS",
+    "Levels",
+    "PlayResult",
+    "best_play",
+    "effective_level",
+    "hand_base_at",
+    "score",
+    "scoring_cards",
     "POLICY_NAMES",
     "BlindDiscard",
     "FlushChaser",

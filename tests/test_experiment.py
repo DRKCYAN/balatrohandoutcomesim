@@ -7,15 +7,18 @@ from balatro_sim.cards import vanilla_deck
 from balatro_sim.evaluator import HandType
 from balatro_sim.experiment import at_least, paired_experiment
 from balatro_sim.policy import FlushChaser, NoDiscard
+from balatro_sim.scoring import PlayResult
 from balatro_sim.simulate import run_distribution
 
 
 class TestAtLeast(unittest.TestCase):
     def test_indicator(self):
+        # statistics take the whole PlayResult since Phase 3 (score stats
+        # need it); at_least only reads the hand type
         stat = at_least(HandType.PAIR)
-        self.assertEqual(stat(HandType.HIGH_CARD), 0.0)
-        self.assertEqual(stat(HandType.PAIR), 1.0)
-        self.assertEqual(stat(HandType.FLUSH), 1.0)
+        self.assertEqual(stat(PlayResult(HandType.HIGH_CARD, (), None)), 0.0)
+        self.assertEqual(stat(PlayResult(HandType.PAIR, (), None)), 1.0)
+        self.assertEqual(stat(PlayResult(HandType.FLUSH, (), None)), 1.0)
 
 
 class TestPairedExperiment(unittest.TestCase):

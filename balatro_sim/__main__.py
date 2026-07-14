@@ -1,8 +1,11 @@
-"""CLI. Four commands:
+"""CLI. Five commands:
 
-Distribution (default):
+Distribution (default; --blind/--level add the score section):
     python -m balatro_sim --trials 100000 --seed 42
-    python -m balatro_sim --policy flushchaser --discards 3 --trials 20000
+    python -m balatro_sim --policy flushchaser --discards 3 --blind 600
+
+Score a specific hand (the Xbox validation workhorse):
+    python -m balatro_sim score "KS KH 7D 2C 3H" --level pair=2
 
 Paired comparison (common random numbers):
     python -m balatro_sim compare --a none --b flushchaser --stat flush \
@@ -17,6 +20,7 @@ Charts (PNG; needs matplotlib, the only optional dependency):
     python -m balatro_sim plot converge --policy flushchaser --stat flush
     python -m balatro_sim plot discards --policies madehand flushchaser
     python -m balatro_sim plot flips --a none --b flushchaser --stat flush
+    python -m balatro_sim plot cdf --policies none flushchaser --blind 600
 
 Terminal output is ASCII-only (Windows console safe). Every distribution
 run is self-validating: it reports per-trial cross-check mismatches
@@ -33,10 +37,11 @@ import time
 from math import sqrt
 
 from . import exact
-from .cards import vanilla_deck
-from .evaluator import HandType
-from .experiment import at_least, paired_experiment
+from .cards import CHIP_VALUE, hand as parse_hand, vanilla_deck
+from .evaluator import HandType, evaluate
+from .experiment import at_least, paired_experiment, score_at_least
 from .policy import POLICY_NAMES, get_policy
+from .scoring import best_play, effective_level, hand_base_at, scoring_cards
 from .simulate import run_distribution
 
 _AVAIL_ORDER = (
@@ -67,6 +72,44 @@ _STAT_TYPES = {
     "royal": HandType.ROYAL_FLUSH,
 }
 
+# names accepted by --level TYPE=N (royal shares straight_flush's level)
+_LEVEL_TYPES = {
+    "high_card": HandType.HIGH_CARD,
+    **{k: v for k, v in _STAT_TYPES.items() if k != "royal"},
+    "five": HandType.FIVE_OF_A_KIND,
+    "flush_house": HandType.FLUSH_HOUSE,
+    "flush_five": HandType.FLUSH_FIVE,
+}
+
+
+def _parse_levels(items: list[str] | None) -> dict[HandType, int]:
+    """--level pair=2 --level flush=3 -> {PAIR: 2, FLUSH: 3}. Unset types
+    are level 1. An empty dict is a valid 'all level 1' scoring config."""
+    levels: dict[HandType, int] = {}
+    for item in items or []:
+        name, _, val = item.partition("=")
+        if name == "royal":
+            raise SystemExit(
+                "royal shares straight_flush's level (one planet, Neptune); "
+                "use --level straight_flush=N"
+            )
+        if name not in _LEVEL_TYPES:
+            raise SystemExit(
+                f"unknown hand type in --level {item!r}; "
+                f"choose from {', '.join(sorted(_LEVEL_TYPES))}"
+            )
+        if not val.isdigit() or int(val) < 1:
+            raise SystemExit(f"--level {item!r}: level must be an integer >= 1")
+        levels[_LEVEL_TYPES[name]] = int(val)
+    return levels
+
+
+def _levels_label(levels: dict[HandType, int]) -> str:
+    if not levels:
+        return "all hands level 1"
+    parts = ", ".join(f"{t.display} L{v}" for t, v in sorted(levels.items()))
+    return f"{parts}; rest level 1"
+
 
 def _cmd_dist(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
@@ -79,8 +122,14 @@ def _cmd_dist(argv: list[str]) -> int:
     ap.add_argument("--policy", choices=POLICY_NAMES, default="none")
     ap.add_argument("--discards", type=int, default=3,
                     help="discards available to the policy (default 3)")
+    ap.add_argument("--blind", type=float, default=None,
+                    help="blind requirement: adds the score section with P(S >= blind)")
+    ap.add_argument("--level", action="append", metavar="TYPE=N",
+                    help="hand level, repeatable (e.g. --level pair=2); implies scoring")
     args = ap.parse_args(argv)
 
+    levels = _parse_levels(args.level)
+    scored = args.blind is not None or bool(levels)
     deck = vanilla_deck()
     policy = get_policy(args.policy)
     uniform = args.policy in _UNIFORM_POLICIES or args.discards == 0
@@ -102,10 +151,26 @@ def _cmd_dist(argv: list[str]) -> int:
         policy=policy,
         discards=args.discards,
         progress=lambda i: print(f"  ... {i:,}/{args.trials:,}", flush=True),
+        levels=levels if scored else None,
     )
     dt = time.perf_counter() - t0
     print(f"done in {dt:.1f}s ({args.trials / dt:,.0f} trials/s)")
     print()
+
+    if scored:
+        qs = [(1, "p1"), (5, "p5"), (25, "p25"), (50, "median"),
+              (75, "p75"), (95, "p95"), (99, "p99")]
+        print(f"score of best play per trial ({_levels_label(levels)})")
+        row = f"  min {min(report.scores)}"
+        for q, name in qs:
+            row += f"   {name} {report.score_percentile(q)}"
+        row += f"   max {max(report.scores)}"
+        print(row)
+        if args.blind is not None:
+            p = report.p_score_at_least(args.blind)
+            se_p = sqrt(p * (1 - p) / report.n)
+            print(f"  P(S >= {args.blind:g}) = {p:.5f} +/- {se_p:.5f} (SE)")
+        print()
 
     n = report.n
     exact_best: dict[HandType, object] = {}
@@ -170,19 +235,34 @@ def _cmd_compare(argv: list[str]) -> int:
     )
     ap.add_argument("--a", choices=POLICY_NAMES, required=True, help="baseline arm")
     ap.add_argument("--b", choices=POLICY_NAMES, required=True, help="treatment arm")
-    ap.add_argument("--stat", choices=sorted(_STAT_TYPES), default="flush",
-                    help="statistic: P(best >= this hand type); default flush")
+    ap.add_argument("--stat", choices=sorted(_STAT_TYPES) + ["score"], default="flush",
+                    help="P(best >= hand type), or 'score' for P(S >= --blind); "
+                    "default flush")
+    ap.add_argument("--blind", type=float, default=None,
+                    help="required with --stat score")
+    ap.add_argument("--level", action="append", metavar="TYPE=N",
+                    help="hand level for score stats, repeatable")
     ap.add_argument("--trials", type=int, default=20_000, help="default 20000")
     ap.add_argument("--seed", type=int, default=42, help="default 42")
     ap.add_argument("--discards", type=int, default=3, help="default 3")
     args = ap.parse_args(argv)
 
     deck = vanilla_deck()
-    target = _STAT_TYPES[args.stat]
+    if args.stat == "score":
+        if args.blind is None:
+            raise SystemExit("--stat score needs --blind B")
+        levels = _parse_levels(args.level)
+        statistic = score_at_least(args.blind)
+        stat_desc = f"P(S >= {args.blind:g}) ({_levels_label(levels)})"
+    else:
+        target = _STAT_TYPES[args.stat]
+        levels = None
+        statistic = at_least(target)
+        stat_desc = f"P(best >= {target.display})"
     print("Balatro hand-outcome simulator -- paired comparison (CRN)")
     print(
         f"vanilla deck, discards={args.discards}, "
-        f"stat = P(best >= {target.display}), trials={args.trials:,}, seed={args.seed}"
+        f"stat = {stat_desc}, trials={args.trials:,}, seed={args.seed}"
     )
     t0 = time.perf_counter()
     res = paired_experiment(
@@ -192,7 +272,8 @@ def _cmd_compare(argv: list[str]) -> int:
         policy_a=get_policy(args.a),
         policy_b=get_policy(args.b),
         discards=args.discards,
-        statistic=at_least(target),
+        statistic=statistic,
+        levels=levels,
     )
     dt = time.perf_counter() - t0
     print(f"done in {dt:.1f}s ({args.trials / dt:,.0f} trials/s)")
@@ -234,8 +315,51 @@ def _cmd_trace(argv: list[str]) -> int:
     return 0
 
 
+def _cmd_score(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(
+        prog="balatro_sim score",
+        description="Score a hand exactly as the sim would -- the Xbox "
+        "validation workhorse. 1-5 cards: scores that exact play. "
+        "6-8 cards: shows the best play the sim would choose.",
+    )
+    ap.add_argument("cards", help='space-separated cards, e.g. "KS KH 7D 2C 3H"')
+    ap.add_argument("--level", action="append", metavar="TYPE=N",
+                    help="hand level, repeatable (e.g. --level pair=2)")
+    args = ap.parse_args(argv)
+
+    levels = _parse_levels(args.level)
+    cards = parse_hand(args.cards)
+    if not 1 <= len(cards) <= 8:
+        raise SystemExit(f"give 1-8 cards, got {len(cards)}")
+
+    def breakdown(played) -> None:
+        t = evaluate(played)
+        lvl = effective_level(levels, t)
+        base_chips, mult = hand_base_at(t, lvl)
+        scoring = scoring_cards(t, played)
+        card_chips = [CHIP_VALUE[c.rank] for c in scoring]
+        total = (base_chips + sum(card_chips)) * mult
+        print(f"  hand type:     {t.display} (level {lvl})")
+        print(f"  scoring cards: {' '.join(str(c) for c in scoring)}"
+              f"  ({' + '.join(map(str, card_chips))} = {sum(card_chips)} card chips)")
+        print(f"  formula:       ({base_chips} base + {sum(card_chips)} cards)"
+              f" x {mult} mult")
+        print(f"  score:         {total}")
+
+    print(f"levels: {_levels_label(levels)}")
+    if len(cards) <= 5:
+        print(f"played: {' '.join(str(c) for c in cards)}")
+        breakdown(cards)
+    else:
+        print(f"hand:   {' '.join(str(c) for c in cards)}")
+        pr = best_play(cards, levels)
+        print(f"best play: {' '.join(str(c) for c in pr.played)}")
+        breakdown(pr.played)
+    return 0
+
+
 def _cmd_plot(argv: list[str]) -> int:
-    kinds = ("dist", "converge", "discards", "flips")
+    kinds = ("dist", "converge", "discards", "flips", "cdf")
     if not argv or argv[0] not in kinds:
         print(f"usage: python -m balatro_sim plot {{{','.join(kinds)}}} [options]")
         return 2
@@ -258,10 +382,16 @@ def _cmd_plot(argv: list[str]) -> int:
         ap.add_argument("--max-discards", type=int, default=3)
         ap.add_argument("--trials", type=int, default=4_000,
                         help="per point (default 4000)")
-    else:  # flips
+    elif kind == "flips":
         ap.add_argument("--a", choices=POLICY_NAMES, required=True)
         ap.add_argument("--b", choices=POLICY_NAMES, required=True)
         ap.add_argument("--trials", type=int, default=2_500)
+    else:  # cdf
+        ap.add_argument("--policies", nargs="+", choices=POLICY_NAMES,
+                        default=["none", "madehand", "flushchaser"])
+        ap.add_argument("--blind", type=float, default=None)
+        ap.add_argument("--level", action="append", metavar="TYPE=N")
+        ap.add_argument("--trials", type=int, default=20_000)
     args = ap.parse_args(rest)
 
     from . import charts
@@ -288,10 +418,16 @@ def _cmd_plot(argv: list[str]) -> int:
             [get_policy(p) for p in args.policies], args.max_discards,
             args.trials, args.seed, target, args.out, deck=deck,
         )
-    else:
+    elif kind == "flips":
         charts.flip_grid(
             get_policy(args.a), get_policy(args.b), args.discards,
             args.trials, args.seed, target, args.out, deck=deck,
+        )
+    else:  # cdf
+        charts.score_cdf(
+            [get_policy(p) for p in args.policies], args.discards,
+            args.trials, args.seed, _parse_levels(args.level), args.blind,
+            args.out, deck=deck,
         )
     print(f"wrote {args.out}")
     return 0
@@ -305,6 +441,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_trace(argv[1:])
     if argv and argv[0] == "plot":
         return _cmd_plot(argv[1:])
+    if argv and argv[0] == "score":
+        return _cmd_score(argv[1:])
     return _cmd_dist(argv)
 
 

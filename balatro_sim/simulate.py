@@ -25,12 +25,13 @@ from __future__ import annotations
 import random
 from collections import Counter
 from dataclasses import dataclass
-from math import sqrt
+from math import ceil, sqrt
 from typing import Callable, Optional, Sequence
 
 from .cards import Card
 from .evaluator import HandType, availability, best_from_availability, best_of
 from .policy import NoDiscard, Policy
+from .scoring import Levels, best_play
 
 
 def trial_rng(seed: int, i: int) -> random.Random:
@@ -115,12 +116,28 @@ class DistributionReport:
     best_counts: Counter  # HandType -> trials where it was the best playable
     avail_counts: Counter  # availability flag -> trials where it was set
     inconsistencies: int  # trials where best_of() != availability floor
+    # per-trial best-play scores, in trial order; None unless the run was
+    # given hand levels (scoring is opt-in so type-only runs pay nothing)
+    scores: Optional[list[int]] = None
 
     def p_best(self, t: HandType) -> float:
         return self.best_counts.get(t, 0) / self.n
 
     def p_avail(self, key: str) -> float:
         return self.avail_counts.get(key, 0) / self.n
+
+    def p_score_at_least(self, blind: float) -> float:
+        if self.scores is None:
+            raise ValueError("run was not scored; pass levels= to run_distribution")
+        return sum(1 for s in self.scores if s >= blind) / self.n
+
+    def score_percentile(self, q: float) -> int:
+        """Nearest-rank percentile of the score distribution, q in [0, 100]."""
+        if self.scores is None:
+            raise ValueError("run was not scored; pass levels= to run_distribution")
+        ordered = sorted(self.scores)
+        k = max(0, min(self.n - 1, ceil(q / 100 * self.n) - 1))
+        return ordered[k]
 
 
 # Back-compat alias: Phase 1 reports are the zero-discard special case.
@@ -139,9 +156,18 @@ def run_distribution(
     policy: Optional[Policy] = None,
     discards: int = 0,
     progress: Optional[Callable[[int], None]] = None,
+    levels: Optional[Levels] = None,
 ) -> DistributionReport:
     """n independent trials: shuffle, deal 8, play out the policy's
-    discards, record the best playable hand type of the final hand."""
+    discards, record the best playable hand type of the final hand.
+
+    With `levels` (a HandType -> level mapping; pass {} for all level 1)
+    each trial additionally records the score of the best PLAY -- the
+    highest-scoring subset, which can be a lower TYPE than best_of's
+    (a leveled pair can outscore a flush; even at level 1 a junk full
+    house loses to a face flush). Type counts keep their capability
+    semantics either way.
+    """
     if n < 1:
         raise ValueError("need at least one trial")
     if discards < 0:
@@ -151,6 +177,7 @@ def run_distribution(
     best_counts: Counter = Counter()
     avail_counts: Counter = Counter()
     inconsistencies = 0
+    scores: Optional[list[int]] = None if levels is None else []
     for i in range(n):
         shuffled = list(deck)
         trial_rng(seed, i).shuffle(shuffled)
@@ -163,10 +190,13 @@ def run_distribution(
                 avail_counts[key] += 1
         if best_from_availability(av) is not t:
             inconsistencies += 1
+        if scores is not None:
+            scores.append(best_play(final, levels).score)
         if progress is not None and (i + 1) % 10_000 == 0:
             progress(i + 1)
     return DistributionReport(
-        n, seed, policy.name, discards, best_counts, avail_counts, inconsistencies
+        n, seed, policy.name, discards, best_counts, avail_counts,
+        inconsistencies, scores,
     )
 
 
