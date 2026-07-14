@@ -4,8 +4,13 @@ Distribution (default; --blind/--level add the score section):
     python -m balatro_sim --trials 100000 --seed 42
     python -m balatro_sim --policy flushchaser --discards 3 --blind 600
 
-Score a specific hand (the Xbox validation workhorse):
+Score a specific hand (make sure u check ts on your xbox):
     python -m balatro_sim score "KS KH 7D 2C 3H" --level pair=2
+
+Full-blind trials -- the real clearing condition (4 hands, 3 shared
+discards, continuing deck); compare --stat clear is the paired version:
+    python -m balatro_sim blind --policy flushchaser --blind 600
+    python -m balatro_sim compare --a madehand --b flushchaser --stat clear --blind 600
 
 Paired comparison (common random numbers):
     python -m balatro_sim compare --a none --b flushchaser --stat flush \
@@ -28,6 +33,7 @@ run is self-validating: it reports per-trial cross-check mismatches
 (policy none or blind), z-scores against the exact math in exact.py.
 Policy-shaped distributions (madehand/flushchaser) have no closed form,
 so those columns are omitted rather than faked.
+
 """
 from __future__ import annotations
 
@@ -39,10 +45,15 @@ from math import sqrt
 from . import exact
 from .cards import CHIP_VALUE, hand as parse_hand, vanilla_deck
 from .evaluator import HandType, evaluate
-from .experiment import at_least, paired_experiment, score_at_least
+from .experiment import (
+    at_least,
+    paired_blind_experiment,
+    paired_experiment,
+    score_at_least,
+)
 from .policy import POLICY_NAMES, get_policy
 from .scoring import best_play, effective_level, hand_base_at, scoring_cards
-from .simulate import run_distribution
+from .simulate import run_blinds, run_distribution
 
 _AVAIL_ORDER = (
     "pair",
@@ -235,46 +246,67 @@ def _cmd_compare(argv: list[str]) -> int:
     )
     ap.add_argument("--a", choices=POLICY_NAMES, required=True, help="baseline arm")
     ap.add_argument("--b", choices=POLICY_NAMES, required=True, help="treatment arm")
-    ap.add_argument("--stat", choices=sorted(_STAT_TYPES) + ["score"], default="flush",
-                    help="P(best >= hand type), or 'score' for P(S >= --blind); "
+    ap.add_argument("--stat", choices=sorted(_STAT_TYPES) + ["score", "clear"],
+                    default="flush",
+                    help="P(best >= hand type); 'score' = single-hand "
+                    "P(S >= --blind); 'clear' = full-blind P(total >= --blind) "
+                    "over --hands hands (the real clearing condition). "
                     "default flush")
     ap.add_argument("--blind", type=float, default=None,
-                    help="required with --stat score")
+                    help="required with --stat score/clear")
+    ap.add_argument("--hands", type=int, default=4,
+                    help="hands per blind for --stat clear (default 4)")
     ap.add_argument("--level", action="append", metavar="TYPE=N",
-                    help="hand level for score stats, repeatable")
+                    help="hand level for score/clear stats, repeatable")
     ap.add_argument("--trials", type=int, default=20_000, help="default 20000")
     ap.add_argument("--seed", type=int, default=42, help="default 42")
     ap.add_argument("--discards", type=int, default=3, help="default 3")
     args = ap.parse_args(argv)
 
     deck = vanilla_deck()
-    if args.stat == "score":
-        if args.blind is None:
-            raise SystemExit("--stat score needs --blind B")
-        levels = _parse_levels(args.level)
-        statistic = score_at_least(args.blind)
-        stat_desc = f"P(S >= {args.blind:g}) ({_levels_label(levels)})"
-    else:
-        target = _STAT_TYPES[args.stat]
-        levels = None
-        statistic = at_least(target)
-        stat_desc = f"P(best >= {target.display})"
     print("Balatro hand-outcome simulator -- paired comparison (CRN)")
-    print(
-        f"vanilla deck, discards={args.discards}, "
-        f"stat = {stat_desc}, trials={args.trials:,}, seed={args.seed}"
-    )
     t0 = time.perf_counter()
-    res = paired_experiment(
-        deck,
-        args.trials,
-        args.seed,
-        policy_a=get_policy(args.a),
-        policy_b=get_policy(args.b),
-        discards=args.discards,
-        statistic=statistic,
-        levels=levels,
-    )
+    if args.stat == "clear":
+        if args.blind is None:
+            raise SystemExit("--stat clear needs --blind B")
+        levels = _parse_levels(args.level)
+        print(
+            f"vanilla deck, stat = P(clear {args.blind:g} in {args.hands} hands, "
+            f"{args.discards} shared discards) ({_levels_label(levels)}), "
+            f"trials={args.trials:,}, seed={args.seed}"
+        )
+        res = paired_blind_experiment(
+            deck, args.trials, args.seed,
+            policy_a=get_policy(args.a), policy_b=get_policy(args.b),
+            blind=args.blind, hands=args.hands, discards=args.discards,
+            levels=levels,
+        )
+    else:
+        if args.stat == "score":
+            if args.blind is None:
+                raise SystemExit("--stat score needs --blind B")
+            levels = _parse_levels(args.level)
+            statistic = score_at_least(args.blind)
+            stat_desc = f"single-hand P(S >= {args.blind:g}) ({_levels_label(levels)})"
+        else:
+            target = _STAT_TYPES[args.stat]
+            levels = None
+            statistic = at_least(target)
+            stat_desc = f"P(best >= {target.display})"
+        print(
+            f"vanilla deck, discards={args.discards}, "
+            f"stat = {stat_desc}, trials={args.trials:,}, seed={args.seed}"
+        )
+        res = paired_experiment(
+            deck,
+            args.trials,
+            args.seed,
+            policy_a=get_policy(args.a),
+            policy_b=get_policy(args.b),
+            discards=args.discards,
+            statistic=statistic,
+            levels=levels,
+        )
     dt = time.perf_counter() - t0
     print(f"done in {dt:.1f}s ({args.trials / dt:,.0f} trials/s)")
     print()
@@ -312,6 +344,67 @@ def _cmd_trace(argv: list[str]) -> int:
     print(f"wrote {args.out}: trials 0-{args.trials - 1}, policy={args.policy}, "
           f"discards={args.discards}, seed={args.seed}")
     print("open it in a browser; these are the exact trials the statistics count.")
+    return 0
+
+
+def _cmd_blind(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(
+        prog="balatro_sim blind",
+        description="Full-blind trials: up to --hands plays from a "
+        "continuing deck, one shared --discards budget -- the real "
+        "clearing condition, unlike the single-hand distribution.",
+    )
+    ap.add_argument("--policy", choices=POLICY_NAMES, default="none")
+    ap.add_argument("--hands", type=int, default=4, help="hands per blind (default 4)")
+    ap.add_argument("--discards", type=int, default=3,
+                    help="shared discard budget per blind (default 3)")
+    ap.add_argument("--blind", type=float, default=None,
+                    help="chip requirement; omit for the uncensored total distribution")
+    ap.add_argument("--level", action="append", metavar="TYPE=N",
+                    help="hand level, repeatable (e.g. --level flush=2)")
+    ap.add_argument("--trials", type=int, default=20_000, help="default 20000")
+    ap.add_argument("--seed", type=int, default=42, help="default 42")
+    args = ap.parse_args(argv)
+
+    levels = _parse_levels(args.level)
+    deck = vanilla_deck()
+    print("Balatro hand-outcome simulator -- blind trials")
+    print(
+        f"vanilla deck, policy={args.policy}, hands={args.hands}, "
+        f"discards={args.discards} (shared), {_levels_label(levels)}"
+    )
+    target = "none (uncensored totals)" if args.blind is None else f"{args.blind:g}"
+    print(f"blind={target}  trials={args.trials:,}  seed={args.seed}")
+    t0 = time.perf_counter()
+    report = run_blinds(
+        deck, args.trials, args.seed,
+        policy=get_policy(args.policy), hands=args.hands,
+        discards=args.discards, blind=args.blind,
+        levels=levels,
+        progress=lambda i: print(f"  ... {i:,}/{args.trials:,}", flush=True),
+    )
+    dt = time.perf_counter() - t0
+    print(f"done in {dt:.1f}s ({args.trials / dt:,.0f} blinds/s)")
+    print()
+    if args.blind is not None:
+        p = report.p_clear
+        se_p = sqrt(p * (1 - p) / report.n)
+        print(f"  P(clear {args.blind:g}) = {p:.5f} +/- {se_p:.5f} (SE)")
+        print("  hands needed to clear:")
+        for h in sorted(report.hands_used):
+            share = report.hands_used[h] / report.n
+            print(f"    {h}: {share:8.2%}")
+        print(f"    failed: {1 - p:8.2%}")
+        print("  (totals are censored at clear; use no --blind for the full distribution)")
+    else:
+        qs = [(1, "p1"), (5, "p5"), (25, "p25"), (50, "median"),
+              (75, "p75"), (95, "p95"), (99, "p99")]
+        print(f"  blind total over {args.hands} hands (uncensored)")
+        row = f"  min {min(report.totals)}"
+        for q, name in qs:
+            row += f"   {name} {report.total_percentile(q)}"
+        row += f"   max {max(report.totals)}"
+        print(row)
     return 0
 
 
@@ -443,6 +536,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_plot(argv[1:])
     if argv and argv[0] == "score":
         return _cmd_score(argv[1:])
+    if argv and argv[0] == "blind":
+        return _cmd_blind(argv[1:])
     return _cmd_dist(argv)
 
 

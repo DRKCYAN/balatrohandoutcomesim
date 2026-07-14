@@ -76,6 +76,20 @@ always the highest-ranked hand type — even at level 1, a junk full house
 distributions keep their capability semantics; scores model the optimal
 greedy player.
 
+**Estimand correction (2026-07-14).** PLAN.md §4 defines a *single-played-hand*
+trial, but the project's objective (§1–2) is P(clear the **blind**) — the sum
+of up to 4 hands from a continuing deck sharing one 3-discard budget. These
+are different random variables and can rank policies differently (a policy
+whose hands reliably score ~300 one-shots 600 almost never, but sums past it
+easily). The `blind` command and `compare --stat clear` estimate the real
+clearing condition and are the headline numbers; single-hand `--blind` /
+`--stat score` remain as component studies:
+
+```
+python -m balatro_sim blind --policy flushchaser --blind 600 --hands 4 --discards 3
+python -m balatro_sim compare --a madehand --b flushchaser --stat clear --blind 600
+```
+
 ### Policies (π)
 
 Deterministic, RNG-free, pinned by tests — the sim measures build and policy

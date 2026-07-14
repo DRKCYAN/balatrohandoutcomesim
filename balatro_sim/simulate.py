@@ -33,6 +33,13 @@ from .evaluator import HandType, availability, best_from_availability, best_of
 from .policy import NoDiscard, Policy
 from .scoring import Levels, best_play
 
+# NOTE on estimands (correction, 2026-07-14): PLAN.md section 4 defines a
+# single-played-hand trial, but the project's objective (sections 1-2) is
+# P(clear the BLIND) -- the sum of up to `hands` plays from a continuing
+# deck, sharing one discard budget. Those are different random variables
+# and can rank policies differently. play_blind/run_blinds below model
+# the real blind; the single-hand path remains as a component study.
+
 
 def trial_rng(seed: int, i: int) -> random.Random:
     """The one place trial randomness comes from."""
@@ -209,3 +216,167 @@ def run_phase1(
     """Phase 1 loop: the zero-discard special case, kept as a stable entry
     point (its results are pinned by tests and by recorded runs)."""
     return run_distribution(deck, n, seed, policy=NoDiscard(), discards=0, progress=progress)
+
+
+# ------------------------------------------------------------ blind trials
+
+@dataclass(frozen=True)
+class BlindResult:
+    """Outcome of one full blind (up to `hands` plays, shared discards)."""
+
+    total: int
+    cleared: Optional[bool]  # None when no blind target was set
+    hands_used: int
+    discards_used: int
+    hand_scores: tuple[int, ...]
+    hand_types: tuple[HandType, ...]
+
+
+def _replace_positions(
+    hand: list[Card], positions: Sequence[int], shuffled: Sequence[Card], draw: int
+) -> tuple[list[Card], int]:
+    """Replace hand[positions] (ascending) with the next cards off the
+    deck -- the same rule play_out uses, so hands=1 blinds reproduce the
+    single-hand engine exactly. Positions the deck can no longer refill
+    are removed instead (the hand shrinks; impossible on a vanilla deck,
+    real on small Phase-4 decks)."""
+    out = list(hand)
+    unfilled: list[int] = []
+    for j in sorted(positions):
+        if draw < len(shuffled):
+            out[j] = shuffled[draw]
+            draw += 1
+        else:
+            unfilled.append(j)
+    for j in reversed(unfilled):
+        del out[j]
+    return out, draw
+
+
+def _positions_of(hand: Sequence[Card], played: Sequence[Card]) -> list[int]:
+    """Hand positions of the played cards (multiset-safe for duplicates)."""
+    remaining = list(played)
+    positions: list[int] = []
+    for k, c in enumerate(hand):
+        if c in remaining:
+            positions.append(k)
+            remaining.remove(c)
+    return positions
+
+
+def play_blind(
+    shuffled: Sequence[Card],
+    policy: Policy,
+    hands: int = 4,
+    discards: int = 3,
+    levels: Optional[Levels] = None,
+    blind: Optional[float] = None,
+    hand_size: int = 8,
+) -> BlindResult:
+    """One full blind: deal 8, then each turn the policy either discards
+    (non-empty return, budget remaining) or plays best_play(). Played and
+    discarded cards leave the deck permanently; replacements come off the
+    top. Stops early once total >= blind (accumulation is monotone, so
+    P(clear) is unaffected; the reported total is censored at clear).
+
+    Base game: hands=4, discards=3 -- one shared discard budget for the
+    whole blind, which is the resource structure the single-hand trial
+    got wrong. Does not mutate `shuffled` (CRN-safe). `levels=None`
+    scores everything at level 1.
+    """
+    if hands < 1:
+        raise ValueError("a blind allows at least one hand")
+    if discards < 0:
+        raise ValueError("discards must be >= 0")
+    lv: Levels = levels if levels is not None else {}
+    hand = list(shuffled[:hand_size])
+    draw = len(hand)
+    hands_left = hands
+    discards_left = discards
+    total = 0
+    hand_scores: list[int] = []
+    hand_types: list[HandType] = []
+    while hands_left > 0 and hand:
+        idx = ()
+        if discards_left > 0:
+            idx = tuple(policy.discard(tuple(hand), discards_left))
+        if idx:
+            _validate_discard(idx, len(hand))
+            hand, draw = _replace_positions(hand, idx, shuffled, draw)
+            discards_left -= 1
+            continue
+        pr = best_play(tuple(hand), lv)
+        total += pr.score
+        hand_scores.append(pr.score)
+        hand_types.append(pr.hand_type)
+        hands_left -= 1
+        hand, draw = _replace_positions(
+            hand, _positions_of(hand, pr.played), shuffled, draw
+        )
+        if blind is not None and total >= blind:
+            break
+    cleared = None if blind is None else total >= blind
+    return BlindResult(
+        total, cleared, hands - hands_left, discards - discards_left,
+        tuple(hand_scores), tuple(hand_types),
+    )
+
+
+@dataclass
+class BlindReport:
+    n: int
+    seed: int
+    policy_name: str
+    hands: int
+    discards: int
+    blind: Optional[float]
+    cleared_count: Optional[int]  # None when blind was None
+    totals: list[int]  # censored at clear when blind is set
+    hands_used: Counter  # hands at stop; failed trials excluded when blind set
+
+    @property
+    def p_clear(self) -> float:
+        if self.cleared_count is None:
+            raise ValueError("run had no blind target; pass blind= to run_blinds")
+        return self.cleared_count / self.n
+
+    def total_percentile(self, q: float) -> int:
+        ordered = sorted(self.totals)
+        k = max(0, min(self.n - 1, ceil(q / 100 * self.n) - 1))
+        return ordered[k]
+
+
+def run_blinds(
+    deck: Sequence[Card],
+    n: int,
+    seed: int = 0,
+    policy: Optional[Policy] = None,
+    hands: int = 4,
+    discards: int = 3,
+    blind: Optional[float] = None,
+    levels: Optional[Levels] = None,
+    progress: Optional[Callable[[int], None]] = None,
+) -> BlindReport:
+    """n independent blind trials under the standard seeding contract."""
+    if n < 1:
+        raise ValueError("need at least one trial")
+    if policy is None:
+        policy = NoDiscard()
+    cleared_count: Optional[int] = None if blind is None else 0
+    totals: list[int] = []
+    hands_used: Counter = Counter()
+    for i in range(n):
+        shuffled = list(deck)
+        trial_rng(seed, i).shuffle(shuffled)
+        result = play_blind(shuffled, policy, hands, discards, levels, blind)
+        totals.append(result.total)
+        if blind is None or result.cleared:
+            hands_used[result.hands_used] += 1
+        if blind is not None and result.cleared:
+            cleared_count += 1
+        if progress is not None and (i + 1) % 10_000 == 0:
+            progress(i + 1)
+    return BlindReport(
+        n, seed, policy.name, hands, discards, blind,
+        cleared_count, totals, hands_used,
+    )

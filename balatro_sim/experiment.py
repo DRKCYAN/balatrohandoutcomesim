@@ -33,7 +33,7 @@ from .cards import Card
 from .evaluator import HandType, best_of
 from .policy import Policy
 from .scoring import Levels, PlayResult, best_play
-from .simulate import play_out, trial_rng
+from .simulate import play_blind, play_out, trial_rng
 
 Statistic = Callable[[PlayResult], float]
 
@@ -89,6 +89,57 @@ def paired_samples(
         x_b = float(statistic(_play(play_out(shuffled, policy_b, discards), levels)))
         out.append((x_a, x_b))
     return out
+
+
+def paired_blind_experiment(
+    deck: Sequence[Card],
+    n: int,
+    seed: int,
+    policy_a: Policy,
+    policy_b: Policy,
+    blind: float,
+    hands: int = 4,
+    discards: int = 3,
+    levels: Optional[Levels] = None,
+) -> "PairedResult":
+    """Delta P(clear the blind) under CRN -- the project's headline
+    estimand (PLAN.md sections 1-2): X = 1[sum of up to `hands` plays
+    from the shared shuffle reaches `blind`]. Same pairing guarantees as
+    paired_experiment; arm means equal run_blinds.p_clear exactly at
+    shared seeds (pinned by tests)."""
+    if n < 2:
+        raise ValueError("need at least two trials for a sample SE")
+    sum_a = sum_b = sum_d = sum_d2 = 0.0
+    flips_up = flips_down = 0
+    for i in range(n):
+        shuffled = list(deck)
+        trial_rng(seed, i).shuffle(shuffled)
+        x_a = 1.0 if play_blind(shuffled, policy_a, hands, discards, levels, blind).cleared else 0.0
+        x_b = 1.0 if play_blind(shuffled, policy_b, hands, discards, levels, blind).cleared else 0.0
+        d = x_b - x_a
+        sum_a += x_a
+        sum_b += x_b
+        sum_d += d
+        sum_d2 += d * d
+        if d > 0:
+            flips_up += 1
+        elif d < 0:
+            flips_down += 1
+    delta = sum_d / n
+    var_d = max(sum_d2 - n * delta * delta, 0.0) / (n - 1)
+    return PairedResult(
+        n=n,
+        seed=seed,
+        name_a=policy_a.name,
+        name_b=policy_b.name,
+        discards=discards,
+        p_a=sum_a / n,
+        p_b=sum_b / n,
+        delta=delta,
+        se=sqrt(var_d / n),
+        flips_up=flips_up,
+        flips_down=flips_down,
+    )
 
 
 @dataclass

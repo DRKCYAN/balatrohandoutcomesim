@@ -1,4 +1,4 @@
-"""Balatro hand-outcome Monte Carlo simulator. See PLAN.md for the spec."""
+"""Balatro hand-outcome Monte Carlo simulator. See PLAN.md for the spec. Also if your an admissions officer chec read me"""
 from .cards import CHIP_VALUE, Card, card, hand, vanilla_deck
 from .evaluator import (
     HAND_BASE,
@@ -11,6 +11,7 @@ from .evaluator import (
 from .experiment import (
     PairedResult,
     at_least,
+    paired_blind_experiment,
     paired_experiment,
     paired_samples,
     score_at_least,
@@ -35,11 +36,15 @@ from .policy import (
     get_policy,
 )
 from .simulate import (
+    BlindReport,
+    BlindResult,
     DiscardStep,
     DistributionReport,
     Phase1Report,
     deal,
+    play_blind,
     play_out,
+    run_blinds,
     run_distribution,
     run_phase1,
     se,
@@ -61,6 +66,7 @@ __all__ = [
     "evaluate",
     "PairedResult",
     "at_least",
+    "paired_blind_experiment",
     "paired_experiment",
     "paired_samples",
     "score_at_least",
@@ -79,11 +85,15 @@ __all__ = [
     "NoDiscard",
     "Policy",
     "get_policy",
+    "BlindReport",
+    "BlindResult",
     "DiscardStep",
     "DistributionReport",
     "Phase1Report",
     "deal",
+    "play_blind",
     "play_out",
+    "run_blinds",
     "run_distribution",
     "run_phase1",
     "se",

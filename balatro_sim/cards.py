@@ -4,8 +4,7 @@ A Card is a (rank, suit) NamedTuple. Ranks are ints 2..14 (J=11, Q=12,
 K=13, A=14); the ace also plays low in A-2-3-4-5 straights, which is the
 evaluator's business, not the card's. Suits are ints 0..3 indexing SUITS.
 
-Modified decks (Phase 4) may contain duplicate cards, so nothing here
-assumes uniqueness.
+Also since we gonna add the ability for modified deck, don't assume card uniqueness
 """
 from __future__ import annotations
 
