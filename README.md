@@ -1,3 +1,16 @@
+If you are an admissions officer or someone checking my resume, read this. If your checking this purely for the love of the game scroll down a bit.
+
+Balatro is a roguelike deckbuilder where you use poker hands and wild Joker modifiers to hit increasingly massive score requirements. The entire game is a high-stakes balancing act of risk and reward, forcing you to constantly gamble your hard-earned cash on unpredictable booster packs and destructive abilities. You must boldly manipulate your deck and wager on game-breaking synergies to survive, knowing that one wrong bet or bad draw could instantly end your run.
+
+Searching the internet, I saw that there were already score calculators(deterministic) which could tell your max score in a given hand. However for a game like Balatro where risk management and chance play a heavy role, I was surprised to see that there were no stochastic process/calculator to answer this question: given this deck and this policy, what is the distribution of outcomes, and specifically, what is the probability of failing to clear a blind?
+
+
+ 
+
+
+
+
+
 # Balatro Hand-Outcome Simulator
 
 Monte Carlo simulator for Balatro whose objective is a **survival probability**
