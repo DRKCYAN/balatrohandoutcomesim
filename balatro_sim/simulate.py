@@ -1,24 +1,8 @@
-"""Trial loop: shuffle, deal 8, discard/redraw under a policy, best hand type.
-
-Seeding contract (the common-random-numbers hook): trial i under base
-seed s uses random.Random(f"{s}:{i}"). String seeds hash through SHA-512,
-so the shuffle stream is stable across platforms, processes and Python
-builds -- required so that paired comparisons can replay identical
-shuffles through both arms (CRN) and so results are reproducible. Seed
-per trial, never per run. All trial randomness is the shuffle; policies
-are deterministic, so a trial is a pure function of (deck, seed, i,
-policy, discards).
-
-Discard mechanics (play_out): the hand is the top 8 of the shuffle; each
-discard replaces the chosen cards, in ascending hand-index order, with
-the next cards off the top of the remaining deck. Policies must not
-depend on hand order, but the rule is fixed so trials are reproducible.
-
-Every trial runs the availability cross-check on the FINAL hand:
-best_of() (subset enumeration) and best_from_availability() (whole-hand
-counting) are independent computations of the same quantity and must
-agree exactly on duplicate-free decks. Mismatches are counted, not
-raised, so a full run always reports.
+"""Trial loop: shuffle, deal a hand (8 by default), discard/redraw under a
+policy, best hand type. CRN seeding: trial i uses Random(f"{s}:{i}") (string
+seeds hash via SHA-512, stable across platforms), so paired arms replay
+identical shuffles. Every trial cross-checks best_of() against
+best_from_availability(); mismatches are counted, not raised.
 """
 from __future__ import annotations
 
@@ -33,12 +17,9 @@ from .evaluator import HandType, availability, best_from_availability, best_of
 from .policy import NoDiscard, Policy
 from .scoring import Levels, best_play
 
-# NOTE on estimands (correction, 2026-07-14): PLAN.md section 4 defines a
-# single-played-hand trial, but the project's objective (sections 1-2) is
-# P(clear the BLIND) -- the sum of up to `hands` plays from a continuing
-# deck, sharing one discard budget. Those are different random variables
-# and can rank policies differently. play_blind/run_blinds below model
-# the real blind; the single-hand path remains as a component study.
+# Estimand note: the objective is P(clear the BLIND) -- up to `hands` plays
+# from a continuing deck sharing one discard budget. play_blind/run_blinds
+# model that; the single-hand path remains a component study.
 
 
 def trial_rng(seed: int, i: int) -> random.Random:
@@ -58,8 +39,8 @@ class DiscardStep:
     """One discard round, as recorded by play_out(trace=...)."""
 
     hand_before: tuple[Card, ...]
-    discarded_indices: tuple[int, ...]  # ascending
-    drawn: tuple[Card, ...]  # replacement cards, in the order they landed
+    discarded_indices: tuple[int, ...]
+    drawn: tuple[Card, ...]
 
 
 def _validate_discard(idx: tuple[int, ...], hand_len: int) -> None:
@@ -78,18 +59,16 @@ def play_out(
     hand_size: int = 8,
     trace: Optional[list] = None,
 ) -> tuple[Card, ...]:
-    """Deal the top hand_size of an already-shuffled deck, then let the
-    policy spend up to `discards` discards. Returns the final hand.
-
-    Does not mutate `shuffled`, so paired arms can share one shuffle.
-
-    If `trace` is a list, one DiscardStep per round is appended to it --
-    the replay hook (trace.py). Same loop either way, so a traced replay
-    cannot diverge from what the hot path did; the hot path (trace=None)
-    allocates nothing extra.
+    """Deal the top hand_size of an already-shuffled deck, then spend up to
+    `discards` discards; returns the final hand. Does not mutate `shuffled`.
+    If `trace` is a list, a DiscardStep per round is appended.
     """
+    if not 1 <= hand_size <= len(shuffled):
+        raise ValueError(
+            f"hand_size must be 1..{len(shuffled)} (deck size), got {hand_size}"
+        )
     hand = list(shuffled[:hand_size])
-    draw = hand_size  # index of the next card off the top
+    draw = hand_size
     left = discards
     while left > 0:
         idx = tuple(policy.discard(tuple(hand), left))
@@ -120,12 +99,11 @@ class DistributionReport:
     seed: int
     policy_name: str
     discards: int
-    best_counts: Counter  # HandType -> trials where it was the best playable
-    avail_counts: Counter  # availability flag -> trials where it was set
-    inconsistencies: int  # trials where best_of() != availability floor
-    # per-trial best-play scores, in trial order; None unless the run was
-    # given hand levels (scoring is opt-in so type-only runs pay nothing)
+    best_counts: Counter
+    avail_counts: Counter
+    inconsistencies: int
     scores: Optional[list[int]] = None
+    hand_size: int = 8
 
     def p_best(self, t: HandType) -> float:
         return self.best_counts.get(t, 0) / self.n
@@ -147,7 +125,7 @@ class DistributionReport:
         return ordered[k]
 
 
-# Back-compat alias: Phase 1 reports are the zero-discard special case.
+# Phase 1 reports are the zero-discard special case.
 Phase1Report = DistributionReport
 
 
@@ -164,21 +142,20 @@ def run_distribution(
     discards: int = 0,
     progress: Optional[Callable[[int], None]] = None,
     levels: Optional[Levels] = None,
+    hand_size: int = 8,
 ) -> DistributionReport:
-    """n independent trials: shuffle, deal 8, play out the policy's
-    discards, record the best playable hand type of the final hand.
-
-    With `levels` (a HandType -> level mapping; pass {} for all level 1)
-    each trial additionally records the score of the best PLAY -- the
-    highest-scoring subset, which can be a lower TYPE than best_of's
-    (a leveled pair can outscore a flush; even at level 1 a junk full
-    house loses to a face flush). Type counts keep their capability
-    semantics either way.
+    """n independent trials recording the best playable hand type. With
+    `levels` (pass {} for all level 1) each trial also records the best
+    PLAY's score -- the highest-scoring subset, not best_of's type.
     """
     if n < 1:
         raise ValueError("need at least one trial")
     if discards < 0:
         raise ValueError("discards must be >= 0")
+    if not 1 <= hand_size <= len(deck):
+        raise ValueError(
+            f"hand_size must be 1..{len(deck)} (deck size), got {hand_size}"
+        )
     if policy is None:
         policy = NoDiscard()
     best_counts: Counter = Counter()
@@ -188,14 +165,16 @@ def run_distribution(
     for i in range(n):
         shuffled = list(deck)
         trial_rng(seed, i).shuffle(shuffled)
-        final = play_out(shuffled, policy, discards)
+        final = play_out(shuffled, policy, discards, hand_size)
         t, _ = best_of(final)
         av = availability(final)
         best_counts[t] += 1
         for key, flag in av.items():
             if flag:
                 avail_counts[key] += 1
-        if best_from_availability(av) is not t:
+        # Secret hands are above availability()'s flags, so equality only
+        # applies at Royal Flush or below.
+        if t <= HandType.ROYAL_FLUSH and best_from_availability(av) is not t:
             inconsistencies += 1
         if scores is not None:
             scores.append(best_play(final, levels).score)
@@ -203,7 +182,7 @@ def run_distribution(
             progress(i + 1)
     return DistributionReport(
         n, seed, policy.name, discards, best_counts, avail_counts,
-        inconsistencies, scores,
+        inconsistencies, scores, hand_size,
     )
 
 
@@ -213,19 +192,16 @@ def run_phase1(
     seed: int = 0,
     progress: Optional[Callable[[int], None]] = None,
 ) -> DistributionReport:
-    """Phase 1 loop: the zero-discard special case, kept as a stable entry
-    point (its results are pinned by tests and by recorded runs)."""
+    """Phase 1 loop: the zero-discard special case, kept as a stable entry point."""
     return run_distribution(deck, n, seed, policy=NoDiscard(), discards=0, progress=progress)
 
-
-# ------------------------------------------------------------ blind trials
 
 @dataclass(frozen=True)
 class BlindResult:
     """Outcome of one full blind (up to `hands` plays, shared discards)."""
 
     total: int
-    cleared: Optional[bool]  # None when no blind target was set
+    cleared: Optional[bool]
     hands_used: int
     discards_used: int
     hand_scores: tuple[int, ...]
@@ -235,11 +211,8 @@ class BlindResult:
 def _replace_positions(
     hand: list[Card], positions: Sequence[int], shuffled: Sequence[Card], draw: int
 ) -> tuple[list[Card], int]:
-    """Replace hand[positions] (ascending) with the next cards off the
-    deck -- the same rule play_out uses, so hands=1 blinds reproduce the
-    single-hand engine exactly. Positions the deck can no longer refill
-    are removed instead (the hand shrinks; impossible on a vanilla deck,
-    real on small Phase-4 decks)."""
+    """Replace hand[positions] (ascending) with the next cards off the deck.
+    Positions the deck can no longer refill are removed (the hand shrinks)."""
     out = list(hand)
     unfilled: list[int] = []
     for j in sorted(positions):
@@ -273,21 +246,19 @@ def play_blind(
     blind: Optional[float] = None,
     hand_size: int = 8,
 ) -> BlindResult:
-    """One full blind: deal 8, then each turn the policy either discards
-    (non-empty return, budget remaining) or plays best_play(). Played and
-    discarded cards leave the deck permanently; replacements come off the
-    top. Stops early once total >= blind (accumulation is monotone, so
-    P(clear) is unaffected; the reported total is censored at clear).
-
-    Base game: hands=4, discards=3 -- one shared discard budget for the
-    whole blind, which is the resource structure the single-hand trial
-    got wrong. Does not mutate `shuffled` (CRN-safe). `levels=None`
-    scores everything at level 1.
+    """One full blind: deal `hand_size`, then each turn the policy discards
+    (budget remaining) or plays best_play(); played/discarded cards leave
+    the deck. Stops once total >= blind (then censored). Base game: hands=4,
+    discards=3 shared. Does not mutate `shuffled`.
     """
     if hands < 1:
         raise ValueError("a blind allows at least one hand")
     if discards < 0:
         raise ValueError("discards must be >= 0")
+    if not 1 <= hand_size <= len(shuffled):
+        raise ValueError(
+            f"hand_size must be 1..{len(shuffled)} (deck size), got {hand_size}"
+        )
     lv: Levels = levels if levels is not None else {}
     hand = list(shuffled[:hand_size])
     draw = len(hand)
@@ -330,9 +301,10 @@ class BlindReport:
     hands: int
     discards: int
     blind: Optional[float]
-    cleared_count: Optional[int]  # None when blind was None
-    totals: list[int]  # censored at clear when blind is set
+    cleared_count: Optional[int]
+    totals: list[int]
     hands_used: Counter  # hands at stop; failed trials excluded when blind set
+    hand_size: int = 8
 
     @property
     def p_clear(self) -> float:
@@ -356,10 +328,15 @@ def run_blinds(
     blind: Optional[float] = None,
     levels: Optional[Levels] = None,
     progress: Optional[Callable[[int], None]] = None,
+    hand_size: int = 8,
 ) -> BlindReport:
     """n independent blind trials under the standard seeding contract."""
     if n < 1:
         raise ValueError("need at least one trial")
+    if not 1 <= hand_size <= len(deck):
+        raise ValueError(
+            f"hand_size must be 1..{len(deck)} (deck size), got {hand_size}"
+        )
     if policy is None:
         policy = NoDiscard()
     cleared_count: Optional[int] = None if blind is None else 0
@@ -368,7 +345,7 @@ def run_blinds(
     for i in range(n):
         shuffled = list(deck)
         trial_rng(seed, i).shuffle(shuffled)
-        result = play_blind(shuffled, policy, hands, discards, levels, blind)
+        result = play_blind(shuffled, policy, hands, discards, levels, blind, hand_size)
         totals.append(result.total)
         if blind is None or result.cleared:
             hands_used[result.hands_used] += 1
@@ -378,5 +355,5 @@ def run_blinds(
             progress(i + 1)
     return BlindReport(
         n, seed, policy.name, hands, discards, blind,
-        cleared_count, totals, hands_used,
+        cleared_count, totals, hands_used, hand_size,
     )

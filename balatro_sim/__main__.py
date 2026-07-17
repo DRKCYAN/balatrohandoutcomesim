@@ -1,39 +1,7 @@
-"""CLI. Five commands:
-
-Distribution (default; --blind/--level add the score section):
-    python -m balatro_sim --trials 100000 --seed 42
-    python -m balatro_sim --policy flushchaser --discards 3 --blind 600
-
-Score a specific hand (make sure u check ts on your xbox):
-    python -m balatro_sim score "KS KH 7D 2C 3H" --level pair=2
-
-Full-blind trials -- the real clearing condition (4 hands, 3 shared
-discards, continuing deck); compare --stat clear is the paired version:
-    python -m balatro_sim blind --policy flushchaser --blind 600
-    python -m balatro_sim compare --a madehand --b flushchaser --stat clear --blind 600
-
-Paired comparison (common random numbers):
-    python -m balatro_sim compare --a none --b flushchaser --stat flush \
-        --discards 3 --trials 100000
-
-Trial replay (self-contained HTML, open in any browser):
-    python -m balatro_sim trace --policy madehand --discards 3 --trials 12 \
-        --out trace.html
-
-Charts (PNG; needs matplotlib, the only optional dependency):
-    python -m balatro_sim plot dist --policies none madehand flushchaser
-    python -m balatro_sim plot converge --policy flushchaser --stat flush
-    python -m balatro_sim plot discards --policies madehand flushchaser
-    python -m balatro_sim plot flips --a none --b flushchaser --stat flush
-    python -m balatro_sim plot cdf --policies none flushchaser --blind 600
-
-Terminal output is ASCII-only (Windows console safe). Every distribution
-run is self-validating: it reports per-trial cross-check mismatches
-(must be 0) and, when the final-hand distribution is provably uniform
-(policy none or blind), z-scores against the exact math in exact.py.
-Policy-shaped distributions (madehand/flushchaser) have no closed form,
-so those columns are omitted rather than faked.
-
+"""CLI. Subcommands: distribution (default), blind, compare, score, trace,
+plot; each simulating command takes repeatable --mod deck edits (mods.py)
+and --level. Run with --help for options. ASCII-only output; distribution
+runs self-validate against exact.py.
 """
 from __future__ import annotations
 
@@ -51,6 +19,7 @@ from .experiment import (
     paired_experiment,
     score_at_least,
 )
+from .mods import apply_all, parse_mods, summarize
 from .policy import POLICY_NAMES, get_policy
 from .scoring import best_play, effective_level, hand_base_at, scoring_cards
 from .simulate import run_blinds, run_distribution
@@ -67,8 +36,6 @@ _AVAIL_ORDER = (
     "royal_flush",
 )
 
-# Policies whose final hand is still a uniform 8-subset of the deck, so
-# the Phase 1 exact math applies (see BlindDiscard's docstring).
 _UNIFORM_POLICIES = frozenset({"none", "blind"})
 
 _STAT_TYPES = {
@@ -83,7 +50,6 @@ _STAT_TYPES = {
     "royal": HandType.ROYAL_FLUSH,
 }
 
-# names accepted by --level TYPE=N (royal shares straight_flush's level)
 _LEVEL_TYPES = {
     "high_card": HandType.HIGH_CARD,
     **{k: v for k, v in _STAT_TYPES.items() if k != "royal"},
@@ -122,6 +88,40 @@ def _levels_label(levels: dict[HandType, int]) -> str:
     return f"{parts}; rest level 1"
 
 
+_MOD_HELP = ('deck edit applied before the trial loop, repeatable, order '
+             'matters: "remove 2 3", "add AS AS", "transform KC>KH" '
+             '(rank/suit selectors match all copies)')
+
+
+def _load_deck(mod_texts: list[str] | None, hand_size: int = 8) -> tuple[list, list]:
+    """The vanilla deck run through the --mod edits, in order. Loud on
+    any parse/apply error; refuses decks too small to deal the hand."""
+    if hand_size < 1:
+        raise SystemExit(f"--hand-size must be >= 1, got {hand_size}")
+    try:
+        mods = parse_mods(mod_texts)
+        deck = apply_all(vanilla_deck(), mods)
+    except ValueError as e:
+        raise SystemExit(f"--mod: {e}")
+    if len(deck) < hand_size:
+        raise SystemExit(
+            f"deck has {len(deck)} cards; need >= {hand_size} to deal a "
+            f"{hand_size}-card hand"
+        )
+    return deck, mods
+
+
+def _deck_desc(deck: list, mods: list) -> str:
+    if not mods:
+        return f"vanilla deck ({len(deck)} cards)"
+    return f"modified deck ({summarize(deck)})"
+
+
+def _print_mods(mods: list) -> None:
+    if mods:
+        print("mods (in order): " + "; ".join(m.text for m in mods))
+
+
 def _cmd_dist(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
         prog="balatro_sim",
@@ -133,26 +133,37 @@ def _cmd_dist(argv: list[str]) -> int:
     ap.add_argument("--policy", choices=POLICY_NAMES, default="none")
     ap.add_argument("--discards", type=int, default=3,
                     help="discards available to the policy (default 3)")
+    ap.add_argument("--hand-size", type=int, default=8,
+                    help="cards held in hand (default 8)")
     ap.add_argument("--blind", type=float, default=None,
                     help="blind requirement: adds the score section with P(S >= blind)")
     ap.add_argument("--level", action="append", metavar="TYPE=N",
                     help="hand level, repeatable (e.g. --level pair=2); implies scoring")
+    ap.add_argument("--mod", action="append", metavar='"VERB ARGS"', help=_MOD_HELP)
     args = ap.parse_args(argv)
 
     levels = _parse_levels(args.level)
     scored = args.blind is not None or bool(levels)
-    deck = vanilla_deck()
+    deck, mods = _load_deck(args.mod, args.hand_size)
     policy = get_policy(args.policy)
-    uniform = args.policy in _UNIFORM_POLICIES or args.discards == 0
+    # Exact math applies only to the vanilla 52 dealt 8 (a net no-op mod list
+    # still qualifies via composition equality; a non-8 hand size does not).
+    is_vanilla = sorted(deck) == sorted(vanilla_deck())
+    uniform = (
+        (args.policy in _UNIFORM_POLICIES or args.discards == 0)
+        and is_vanilla and args.hand_size == 8
+    )
     if args.policy == "none":
         print("Balatro hand-outcome simulator -- Phase 1")
-        print(f"vanilla deck ({len(deck)} cards), deal 8, no discards, best playable hand type")
+        print(f"{_deck_desc(deck, mods)}, deal {args.hand_size}, no discards, "
+              "best playable hand type")
     else:
         print("Balatro hand-outcome simulator -- distribution under a discard policy")
         print(
-            f"vanilla deck ({len(deck)} cards), deal 8, policy={args.policy}, "
+            f"{_deck_desc(deck, mods)}, deal {args.hand_size}, policy={args.policy}, "
             f"discards={args.discards}, best playable hand type"
         )
+    _print_mods(mods)
     print(f"trials={args.trials:,}  seed={args.seed}")
     t0 = time.perf_counter()
     report = run_distribution(
@@ -163,6 +174,7 @@ def _cmd_dist(argv: list[str]) -> int:
         discards=args.discards,
         progress=lambda i: print(f"  ... {i:,}/{args.trials:,}", flush=True),
         levels=levels if scored else None,
+        hand_size=args.hand_size,
     )
     dt = time.perf_counter() - t0
     print(f"done in {dt:.1f}s ({args.trials / dt:,.0f} trials/s)")
@@ -186,10 +198,6 @@ def _cmd_dist(argv: list[str]) -> int:
     n = report.n
     exact_best: dict[HandType, object] = {}
     if uniform:
-        # Rows of the best-type distribution that reduce to hand-derivable
-        # math: best exactly Royal needs royal available; best exactly
-        # Straight Flush is (SF available) minus (royal available); High
-        # Card is derived directly.
         royal = exact.royal_flush_available()
         exact_best = {
             HandType.ROYAL_FLUSH: royal,
@@ -228,8 +236,15 @@ def _cmd_dist(argv: list[str]) -> int:
         print()
         print("  expected signature of a correct simulator: 0 mismatches, all |z| <~ 3")
     else:
-        print("  availability of hand classes in the final 8 (policy-shaped;")
-        print("  no closed form exists once the policy reacts to what it sees):")
+        if not is_vanilla:
+            print(f"  availability of hand classes in the final {args.hand_size} (modified deck;")
+            print("  the exact math in exact.py is derived for the vanilla 52 only):")
+        elif args.hand_size != 8:
+            print(f"  availability of hand classes in the final {args.hand_size} (hand size")
+            print("  != 8; the exact math in exact.py is derived for 8 dealt cards only):")
+        else:
+            print("  availability of hand classes in the final 8 (policy-shaped;")
+            print("  no closed form exists once the policy reacts to what it sees):")
         print("    class                  p_hat")
         for key in _AVAIL_ORDER:
             p = report.avail_counts.get(key, 0) / n
@@ -261,25 +276,31 @@ def _cmd_compare(argv: list[str]) -> int:
     ap.add_argument("--trials", type=int, default=20_000, help="default 20000")
     ap.add_argument("--seed", type=int, default=42, help="default 42")
     ap.add_argument("--discards", type=int, default=3, help="default 3")
+    ap.add_argument("--hand-size", type=int, default=8,
+                    help="cards held in hand (both arms; default 8)")
+    ap.add_argument("--mod", action="append", metavar='"VERB ARGS"',
+                    help=_MOD_HELP + "; both arms play the same modified deck")
     args = ap.parse_args(argv)
 
-    deck = vanilla_deck()
+    deck, mods = _load_deck(args.mod, args.hand_size)
+    hsize = "" if args.hand_size == 8 else f", hand_size={args.hand_size}"
     print("Balatro hand-outcome simulator -- paired comparison (CRN)")
+    _print_mods(mods)
     t0 = time.perf_counter()
     if args.stat == "clear":
         if args.blind is None:
             raise SystemExit("--stat clear needs --blind B")
         levels = _parse_levels(args.level)
         print(
-            f"vanilla deck, stat = P(clear {args.blind:g} in {args.hands} hands, "
-            f"{args.discards} shared discards) ({_levels_label(levels)}), "
+            f"{_deck_desc(deck, mods)}, stat = P(clear {args.blind:g} in {args.hands} hands, "
+            f"{args.discards} shared discards){hsize} ({_levels_label(levels)}), "
             f"trials={args.trials:,}, seed={args.seed}"
         )
         res = paired_blind_experiment(
             deck, args.trials, args.seed,
             policy_a=get_policy(args.a), policy_b=get_policy(args.b),
             blind=args.blind, hands=args.hands, discards=args.discards,
-            levels=levels,
+            levels=levels, hand_size=args.hand_size,
         )
     else:
         if args.stat == "score":
@@ -294,7 +315,7 @@ def _cmd_compare(argv: list[str]) -> int:
             statistic = at_least(target)
             stat_desc = f"P(best >= {target.display})"
         print(
-            f"vanilla deck, discards={args.discards}, "
+            f"{_deck_desc(deck, mods)}, discards={args.discards}{hsize}, "
             f"stat = {stat_desc}, trials={args.trials:,}, seed={args.seed}"
         )
         res = paired_experiment(
@@ -306,6 +327,7 @@ def _cmd_compare(argv: list[str]) -> int:
             discards=args.discards,
             statistic=statistic,
             levels=levels,
+            hand_size=args.hand_size,
         )
     dt = time.perf_counter() - t0
     print(f"done in {dt:.1f}s ({args.trials / dt:,.0f} trials/s)")
@@ -332,17 +354,23 @@ def _cmd_trace(argv: list[str]) -> int:
     ap.add_argument("--trials", type=int, default=12,
                     help="how many trials to replay (default 12)")
     ap.add_argument("--seed", type=int, default=42, help="default 42")
+    ap.add_argument("--hand-size", type=int, default=8,
+                    help="cards held in hand (default 8)")
     ap.add_argument("--out", default="trace.html", help="default trace.html")
+    ap.add_argument("--mod", action="append", metavar='"VERB ARGS"', help=_MOD_HELP)
     args = ap.parse_args(argv)
 
     from .trace import render_trace_html
 
+    deck, mods = _load_deck(args.mod, args.hand_size)
     render_trace_html(
-        vanilla_deck(), args.seed, args.trials, get_policy(args.policy),
-        args.discards, args.out,
+        deck, args.seed, args.trials, get_policy(args.policy),
+        args.discards, args.out, args.hand_size,
     )
+    _print_mods(mods)
+    hsize = "" if args.hand_size == 8 else f", hand_size={args.hand_size}"
     print(f"wrote {args.out}: trials 0-{args.trials - 1}, policy={args.policy}, "
-          f"discards={args.discards}, seed={args.seed}")
+          f"discards={args.discards}{hsize}, seed={args.seed}")
     print("open it in a browser; these are the exact trials the statistics count.")
     return 0
 
@@ -358,21 +386,26 @@ def _cmd_blind(argv: list[str]) -> int:
     ap.add_argument("--hands", type=int, default=4, help="hands per blind (default 4)")
     ap.add_argument("--discards", type=int, default=3,
                     help="shared discard budget per blind (default 3)")
+    ap.add_argument("--hand-size", type=int, default=8,
+                    help="cards held in hand (default 8)")
     ap.add_argument("--blind", type=float, default=None,
                     help="chip requirement; omit for the uncensored total distribution")
     ap.add_argument("--level", action="append", metavar="TYPE=N",
                     help="hand level, repeatable (e.g. --level flush=2)")
     ap.add_argument("--trials", type=int, default=20_000, help="default 20000")
     ap.add_argument("--seed", type=int, default=42, help="default 42")
+    ap.add_argument("--mod", action="append", metavar='"VERB ARGS"', help=_MOD_HELP)
     args = ap.parse_args(argv)
 
     levels = _parse_levels(args.level)
-    deck = vanilla_deck()
+    deck, mods = _load_deck(args.mod, args.hand_size)
+    hsize = "" if args.hand_size == 8 else f", hand_size={args.hand_size}"
     print("Balatro hand-outcome simulator -- blind trials")
     print(
-        f"vanilla deck, policy={args.policy}, hands={args.hands}, "
-        f"discards={args.discards} (shared), {_levels_label(levels)}"
+        f"{_deck_desc(deck, mods)}, policy={args.policy}, hands={args.hands}, "
+        f"discards={args.discards} (shared){hsize}, {_levels_label(levels)}"
     )
+    _print_mods(mods)
     target = "none (uncensored totals)" if args.blind is None else f"{args.blind:g}"
     print(f"blind={target}  trials={args.trials:,}  seed={args.seed}")
     t0 = time.perf_counter()
@@ -380,7 +413,7 @@ def _cmd_blind(argv: list[str]) -> int:
         deck, args.trials, args.seed,
         policy=get_policy(args.policy), hands=args.hands,
         discards=args.discards, blind=args.blind,
-        levels=levels,
+        levels=levels, hand_size=args.hand_size,
         progress=lambda i: print(f"  ... {i:,}/{args.trials:,}", flush=True),
     )
     dt = time.perf_counter() - t0
@@ -460,8 +493,11 @@ def _cmd_plot(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog=f"balatro_sim plot {kind}")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--discards", type=int, default=3)
+    ap.add_argument("--hand-size", type=int, default=8,
+                    help="cards held in hand (default 8)")
     ap.add_argument("--stat", choices=sorted(_STAT_TYPES), default="flush")
     ap.add_argument("--out", default=f"{kind}.png")
+    ap.add_argument("--mod", action="append", metavar='"VERB ARGS"', help=_MOD_HELP)
     if kind == "dist":
         ap.add_argument("--policies", nargs="+", choices=POLICY_NAMES,
                         default=["none", "madehand", "flushchaser"])
@@ -479,7 +515,7 @@ def _cmd_plot(argv: list[str]) -> int:
         ap.add_argument("--a", choices=POLICY_NAMES, required=True)
         ap.add_argument("--b", choices=POLICY_NAMES, required=True)
         ap.add_argument("--trials", type=int, default=2_500)
-    else:  # cdf
+    else:
         ap.add_argument("--policies", nargs="+", choices=POLICY_NAMES,
                         default=["none", "madehand", "flushchaser"])
         ap.add_argument("--blind", type=float, default=None)
@@ -489,8 +525,9 @@ def _cmd_plot(argv: list[str]) -> int:
 
     from . import charts
 
-    deck = vanilla_deck()
+    deck, mods = _load_deck(args.mod, args.hand_size)
     target = _STAT_TYPES[args.stat]
+    _print_mods(mods)
     print(f"plotting {kind} -> {args.out} ...", flush=True)
     if kind == "dist":
         reports = []
@@ -499,28 +536,31 @@ def _cmd_plot(argv: list[str]) -> int:
             reports.append(run_distribution(
                 deck, args.trials, args.seed,
                 policy=get_policy(name), discards=args.discards,
+                hand_size=args.hand_size,
             ))
         charts.distribution_chart(reports, args.out)
     elif kind == "converge":
         charts.convergence_chart(
             get_policy(args.policy), args.discards, args.trials, args.seed,
-            target, args.out, deck=deck,
+            target, args.out, deck=deck, hand_size=args.hand_size,
         )
     elif kind == "discards":
         charts.discards_curve(
             [get_policy(p) for p in args.policies], args.max_discards,
             args.trials, args.seed, target, args.out, deck=deck,
+            hand_size=args.hand_size,
         )
     elif kind == "flips":
         charts.flip_grid(
             get_policy(args.a), get_policy(args.b), args.discards,
             args.trials, args.seed, target, args.out, deck=deck,
+            hand_size=args.hand_size,
         )
-    else:  # cdf
+    else:
         charts.score_cdf(
             [get_policy(p) for p in args.policies], args.discards,
             args.trials, args.seed, _parse_levels(args.level), args.blind,
-            args.out, deck=deck,
+            args.out, deck=deck, hand_size=args.hand_size,
         )
     print(f"wrote {args.out}")
     return 0

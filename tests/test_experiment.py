@@ -13,8 +13,6 @@ from balatro_sim.simulate import run_distribution
 
 class TestAtLeast(unittest.TestCase):
     def test_indicator(self):
-        # statistics take the whole PlayResult since Phase 3 (score stats
-        # need it); at_least only reads the hand type
         stat = at_least(HandType.PAIR)
         self.assertEqual(stat(PlayResult(HandType.HIGH_CARD, (), None)), 0.0)
         self.assertEqual(stat(PlayResult(HandType.PAIR, (), None)), 1.0)
@@ -23,8 +21,7 @@ class TestAtLeast(unittest.TestCase):
 
 class TestPairedExperiment(unittest.TestCase):
     def test_self_comparison_is_exactly_zero(self):
-        # CRN construction: identical shuffles + deterministic policy
-        # => identical arms => every D_i is 0, not just their mean.
+        # CRN: identical shuffles + deterministic policy => every D_i is 0
         res = paired_experiment(
             vanilla_deck(), 400, seed=3,
             policy_a=FlushChaser(), policy_b=FlushChaser(),
@@ -36,8 +33,6 @@ class TestPairedExperiment(unittest.TestCase):
         self.assertEqual(res.p_a, res.p_b)
 
     def test_flush_chaser_beats_no_discard_on_flushes(self):
-        # Plan phrased this as delta(A-B) < 0; convention here is B - A,
-        # so the equivalent gate is delta > 0 with the CI excluding zero.
         res = paired_experiment(
             vanilla_deck(), 4000, seed=42,
             policy_a=NoDiscard(), policy_b=FlushChaser(),
@@ -50,9 +45,6 @@ class TestPairedExperiment(unittest.TestCase):
         self.assertGreater(res.flips_up, res.flips_down)
 
     def test_arm_means_cohere_with_run_distribution(self):
-        # Same seed => identical trial_rng streams => the paired arms and
-        # run_distribution see the exact same final hands, so the arm
-        # means must equal the distribution tail probabilities EXACTLY.
         deck = vanilla_deck()
         n, seed = 2000, 9
         res = paired_experiment(

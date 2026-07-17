@@ -1,27 +1,7 @@
-"""Paired comparison with common random numbers -- PLAN.md section 5.
-
-Both arms of a comparison replay the *same shuffle object* per trial, so
-they stay in lockstep until the configurations actually diverge. Garbage
-shuffles fail in both arms, great shuffles clear in both; the difference
-D_i is nonzero only on the marginal trials one arm flips. That collapses
-Var(delta_hat) by the 2*Cov term and is the reason small effects are
-detectable at all.
-
-Sign convention: delta = p_b - p_a ("B minus A"; positive means arm B is
-better on the statistic). PLAN.md's Delta = p_with - p_without maps to
-a = without, b = with.
-
-Statistics are functions of a PlayResult (the played hand's type and,
-when levels were supplied, its score) -- the PLAN.md section 10 shape:
-joker value will be a delta on P(S >= B) through this same estimator.
-
-  - at_least(t): indicator on the hand type.
-  - score_at_least(B): indicator on the score; requires levels=.
-
-Arm semantics: without levels, each arm plays the type-max best_of hand
-(Phase 1/2 behaviour, coherence-pinned to run_distribution's counts).
-With levels, each arm plays the score-max best_play hand -- the optimal
-greedy player -- matching run_distribution's scores exactly.
+"""Paired comparison with common random numbers: both arms replay the same
+shuffle per trial, so D_i is nonzero only where one arm flips -- that
+collapses Var(delta_hat). Sign convention: delta = p_b - p_a. Statistics
+are functions of a PlayResult (at_least on type, score_at_least on score).
 """
 from __future__ import annotations
 
@@ -74,19 +54,16 @@ def paired_samples(
     discards: int,
     statistic: Statistic,
     levels: Optional[Levels] = None,
+    hand_size: int = 8,
 ) -> list[tuple[float, float]]:
-    """Per-trial (x_a, x_b) pairs under CRN -- the raw material for
-    visualisations (flip grids, convergence). Same trial streams as
-    paired_experiment, so summaries computed from this list must equal
-    its estimates exactly (pinned by tests). Materialises n pairs; for
-    plain estimation at large n use paired_experiment, which streams.
-    """
+    """Per-trial (x_a, x_b) pairs under CRN (the raw material for
+    visualisations). Same streams as paired_experiment; materialises n pairs."""
     out: list[tuple[float, float]] = []
     for i in range(n):
         shuffled = list(deck)
         trial_rng(seed, i).shuffle(shuffled)
-        x_a = float(statistic(_play(play_out(shuffled, policy_a, discards), levels)))
-        x_b = float(statistic(_play(play_out(shuffled, policy_b, discards), levels)))
+        x_a = float(statistic(_play(play_out(shuffled, policy_a, discards, hand_size), levels)))
+        x_b = float(statistic(_play(play_out(shuffled, policy_b, discards, hand_size), levels)))
         out.append((x_a, x_b))
     return out
 
@@ -101,12 +78,11 @@ def paired_blind_experiment(
     hands: int = 4,
     discards: int = 3,
     levels: Optional[Levels] = None,
+    hand_size: int = 8,
 ) -> "PairedResult":
-    """Delta P(clear the blind) under CRN -- the project's headline
-    estimand (PLAN.md sections 1-2): X = 1[sum of up to `hands` plays
-    from the shared shuffle reaches `blind`]. Same pairing guarantees as
-    paired_experiment; arm means equal run_blinds.p_clear exactly at
-    shared seeds (pinned by tests)."""
+    """Delta P(clear the blind) under CRN -- the headline estimand:
+    X = 1[sum of up to `hands` plays reaches `blind`]. Arm means equal
+    run_blinds.p_clear exactly at shared seeds."""
     if n < 2:
         raise ValueError("need at least two trials for a sample SE")
     sum_a = sum_b = sum_d = sum_d2 = 0.0
@@ -114,8 +90,8 @@ def paired_blind_experiment(
     for i in range(n):
         shuffled = list(deck)
         trial_rng(seed, i).shuffle(shuffled)
-        x_a = 1.0 if play_blind(shuffled, policy_a, hands, discards, levels, blind).cleared else 0.0
-        x_b = 1.0 if play_blind(shuffled, policy_b, hands, discards, levels, blind).cleared else 0.0
+        x_a = 1.0 if play_blind(shuffled, policy_a, hands, discards, levels, blind, hand_size).cleared else 0.0
+        x_b = 1.0 if play_blind(shuffled, policy_b, hands, discards, levels, blind, hand_size).cleared else 0.0
         d = x_b - x_a
         sum_a += x_a
         sum_b += x_b
@@ -151,10 +127,10 @@ class PairedResult:
     discards: int
     p_a: float
     p_b: float
-    delta: float  # mean of D_i = X_b - X_a
-    se: float  # sample SD of D_i / sqrt(n)
-    flips_up: int  # trials with D_i > 0 (B succeeded where A failed)
-    flips_down: int  # trials with D_i < 0
+    delta: float
+    se: float
+    flips_up: int
+    flips_down: int
 
     @property
     def ci95(self) -> tuple[float, float]:
@@ -170,12 +146,11 @@ def paired_experiment(
     discards: int,
     statistic: Statistic,
     levels: Optional[Levels] = None,
+    hand_size: int = 8,
 ) -> PairedResult:
-    """Estimate delta = E[stat under B] - E[stat under A] with CRN pairing.
-
-    Trial i shuffles once via trial_rng(seed, i) and feeds the identical
-    deck order through both arms (play_out does not mutate it).
-    """
+    """Estimate delta = E[stat under B] - E[stat under A] with CRN pairing:
+    trial i shuffles once and feeds the identical deck order through both
+    arms."""
     if n < 2:
         raise ValueError("need at least two trials for a sample SE")
     sum_a = sum_b = sum_d = sum_d2 = 0.0
@@ -183,8 +158,8 @@ def paired_experiment(
     for i in range(n):
         shuffled = list(deck)
         trial_rng(seed, i).shuffle(shuffled)
-        x_a = float(statistic(_play(play_out(shuffled, policy_a, discards), levels)))
-        x_b = float(statistic(_play(play_out(shuffled, policy_b, discards), levels)))
+        x_a = float(statistic(_play(play_out(shuffled, policy_a, discards, hand_size), levels)))
+        x_b = float(statistic(_play(play_out(shuffled, policy_b, discards, hand_size), levels)))
         d = x_b - x_a
         sum_a += x_a
         sum_b += x_b

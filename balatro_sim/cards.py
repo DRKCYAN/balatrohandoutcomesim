@@ -1,29 +1,23 @@
-"""Card primitives and deck construction.
-
-A Card is a (rank, suit) NamedTuple. Ranks are ints 2..14 (J=11, Q=12,
-K=13, A=14); the ace also plays low in A-2-3-4-5 straights, which is the
-evaluator's business, not the card's. Suits are ints 0..3 indexing SUITS.
-
-Also since we gonna add the ability for modified deck, don't assume card uniqueness
+"""Card primitives and deck construction. A Card is a (rank, suit)
+NamedTuple: ranks 2..14 (J=11..A=14), suits 0..3 indexing SUITS. Modified
+decks are allowed, so don't assume card uniqueness.
 """
 from __future__ import annotations
 
 from typing import NamedTuple
 
-SUITS = "SHDC"  # spades, hearts, diamonds, clubs
+SUITS = "SHDC"
 
 _RANK_NAMES = {11: "J", 12: "Q", 13: "K", 14: "A"}
 _NAME_RANKS = {"J": 11, "Q": 12, "K": 13, "A": 14, "T": 10}
 
 # Chip value of a card when it scores (Balatro: faces 10, ace 11).
-# Used provisionally by best_of() as a tiebreak; the real scoring layer
-# is Phase 3.
 CHIP_VALUE = {r: r for r in range(2, 11)} | {11: 10, 12: 10, 13: 10, 14: 11}
 
 
 class Card(NamedTuple):
-    rank: int  # 2..14
-    suit: int  # index into SUITS
+    rank: int
+    suit: int
 
     def __str__(self) -> str:
         return f"{_RANK_NAMES.get(self.rank, str(self.rank))}{SUITS[self.suit]}"

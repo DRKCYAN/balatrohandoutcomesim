@@ -1,4 +1,4 @@
-"""Balatro hand-outcome Monte Carlo simulator. See PLAN.md for the spec. Also if your an admissions officer chec read me"""
+"""Balatro hand-outcome Monte Carlo simulator. See PLAN.md for the spec."""
 from .cards import CHIP_VALUE, Card, card, hand, vanilla_deck
 from .evaluator import (
     HAND_BASE,

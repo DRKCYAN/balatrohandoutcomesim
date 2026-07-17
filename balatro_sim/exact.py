@@ -1,23 +1,7 @@
-"""Hand-derived exact probabilities for the zero-discard, 8-card deal.
-
-Phase 1's exit criterion: the Monte Carlo distribution must match math
-derivable by hand. This module is deliberately self-contained -- it
-imports nothing from the simulator (rank windows, counting, everything
-is re-derived here), so agreement between the two is evidence, not
-tautology. All probabilities are exact `fractions.Fraction`s.
-
-Sample space: all C(52,8) = 752,538,150 eight-card hands, equally likely.
-
-Three independent techniques, each documented at its function:
-
-  1. Rank-multiset enumeration: partition the 8 cards by rank
-     multiplicity, weight each partition by (ways to assign ranks) x
-     (ways to choose suits within each rank). Gives every rank-only
-     event: pair, two pair, trips, quads, full house.
-  2. Closed forms: direct hypergeometric/inclusion-exclusion formulas
-     for flush, quads and pair -- the latter two double as independent
-     cross-checks of technique 1.
-  3. Window inclusion-exclusion for straights and straight flushes.
+"""Hand-derived exact probabilities for the zero-discard, 8-card deal --
+Phase 1's exit criterion. Self-contained (imports nothing from the
+simulator, so agreement is evidence, not tautology); exact Fractions over
+C(52,8) hands via three techniques documented at their functions.
 """
 from __future__ import annotations
 
@@ -28,19 +12,15 @@ from math import comb, factorial, perm
 
 TOTAL_DEALS = comb(52, 8)
 
-_RANKS = tuple(range(2, 15))  # A = 14, and also plays low in the wheel
+_RANKS = tuple(range(2, 15))  # A = 14, also plays low in the wheel
 _WINDOWS = (frozenset({14, 2, 3, 4, 5}),) + tuple(
     frozenset(range(lo, lo + 5)) for lo in range(2, 11)
 )
 
 
-# ---------------------------------------------------------------- technique 1
-
 def _partitions(total: int = 8, max_part: int = 4, max_parts: int = 13):
-    """Non-increasing tuples of per-rank multiplicities summing to `total`.
-
-    max_part=4: at most four copies of a rank in a vanilla deck.
-    """
+    """Non-increasing tuples of per-rank multiplicities summing to `total`
+    (max_part=4: at most four copies of a rank in a vanilla deck)."""
     def rec(remaining: int, cap: int, prefix: tuple[int, ...]):
         if remaining == 0:
             yield prefix
@@ -54,12 +34,9 @@ def _partitions(total: int = 8, max_part: int = 4, max_parts: int = 13):
 
 
 def _weight(parts: tuple[int, ...]) -> int:
-    """Number of 8-card hands whose rank-multiplicity multiset is `parts`.
-
-    Assign distinct ranks to the k parts: 13!/(13-k)! orderings, divided
-    by m_c! for each group of equal parts (they are interchangeable).
-    Then choose which suits realise each part: prod C(4, c).
-    """
+    """Number of 8-card hands whose rank-multiplicity multiset is `parts`:
+    (ways to assign distinct ranks to the parts, perm(13,k) divided by
+    m!'s for equal parts) x (suit choices prod C(4, c))."""
     mult: dict[int, int] = {}
     for p in parts:
         mult[p] = mult.get(p, 0) + 1
@@ -86,8 +63,7 @@ def pair_or_better() -> Fraction:
 
 
 def two_pair_available() -> Fraction:
-    """Two distinct ranks each holding >= 2 cards (four of one rank alone
-    cannot be played as two pair: any 4-card subset of it is quads)."""
+    """Two distinct ranks each holding >= 2 cards."""
     return _rank_event(lambda p: sum(1 for x in p if x >= 2) >= 2)
 
 
@@ -104,39 +80,34 @@ def full_house_available() -> Fraction:
     return _rank_event(lambda p: p[0] >= 3 and sum(1 for x in p if x >= 2) >= 2)
 
 
-# ---------------------------------------------------------------- technique 2
-
 def pair_or_better_closed_form() -> Fraction:
     """1 - P(all 8 ranks distinct) = 1 - C(13,8) * 4^8 / C(52,8)."""
     return 1 - Fraction(comb(13, 8) * 4**8, TOTAL_DEALS)
 
 
 def quads_closed_form() -> Fraction:
-    """Inclusion-exclusion over ranks: 13*C(48,4) counts each hand once
-    per completed rank; C(13,2) hands complete two ranks (4+4 = 8)."""
+    """Inclusion-exclusion over ranks: 13*C(48,4) minus C(13,2) (hands
+    completing two ranks, 4+4=8)."""
     return Fraction(13 * comb(48, 4) - comb(13, 2), TOTAL_DEALS)
 
 
 def flush_available() -> Fraction:
-    """Some suit holds >= 5 of the 8. Two suits can't both do it (5+5 > 8),
-    so no inclusion-exclusion: 4 * sum_k C(13,k) C(39,8-k) / C(52,8)."""
+    """Some suit holds >= 5 of the 8 (two can't both, 5+5 > 8):
+    4 * sum_k C(13,k) C(39,8-k) / C(52,8)."""
     return Fraction(
         4 * sum(comb(13, k) * comb(39, 8 - k) for k in range(5, 9)), TOTAL_DEALS
     )
 
 
 def royal_flush_available() -> Fraction:
-    """All five cards of one suit's 10-J-Q-K-A present: 4 * C(47,3).
-    Two suits at once would need 10 cards."""
+    """All five of one suit's 10-J-Q-K-A present: 4 * C(47,3)."""
     return Fraction(4 * comb(47, 3), TOTAL_DEALS)
 
-
-# ---------------------------------------------------------------- technique 3
 
 @lru_cache(maxsize=None)
 def _all_ranks_present(u: int) -> Fraction:
     """P(u specified ranks all appear among the 8 cards), by
-    inclusion-exclusion over which of the u ranks are absent."""
+    inclusion-exclusion over which are absent."""
     return Fraction(
         sum((-1) ** j * comb(u, j) * comb(52 - 4 * j, 8) for j in range(u + 1)),
         TOTAL_DEALS,
@@ -145,8 +116,7 @@ def _all_ranks_present(u: int) -> Fraction:
 
 def straight_available() -> Fraction:
     """P(the rank set covers some straight window), inclusion-exclusion
-    over the 10 windows; each intersection term is 'all ranks of the
-    union present', which depends only on the union's size."""
+    over the 10 windows (each term depends only on the union's size)."""
     total = Fraction(0)
     for r in range(1, 11):
         for sub in combinations(_WINDOWS, r):
@@ -156,10 +126,9 @@ def straight_available() -> Fraction:
 
 
 def straight_flush_available() -> Fraction:
-    """Inclusion-exclusion over (suit, window) events 'these 5 exact cards
-    are in the hand'. Cross-suit intersections need >= 10 cards of 8, so
-    they vanish and the sum is 4x the one-suit case. A union of same-suit
-    windows with u <= 8 specific cards costs C(52-u, 8-u)."""
+    """Inclusion-exclusion over (suit, window) events. Cross-suit terms
+    need >= 10 cards so vanish (sum is 4x the one-suit case); a same-suit
+    window union of u <= 8 cards costs C(52-u, 8-u)."""
     per_suit = 0
     for r in range(1, 11):
         for sub in combinations(_WINDOWS, r):
@@ -169,18 +138,10 @@ def straight_flush_available() -> Fraction:
     return Fraction(4 * per_suit, TOTAL_DEALS)
 
 
-# ------------------------------------------------------------- best-hand rows
-
 def best_is_high_card() -> Fraction:
-    """P(best playable hand is exactly High Card): no pair (8 distinct
-    ranks), no straight (rank set misses every window), no flush (every
-    suit <= 4).
-
-    For a fixed set of 8 distinct ranks the 4^8 suit assignments are
-    uniform and independent of which set it is, so the count factorises:
-    (rank sets missing every window) x (assignments with no suit >= 5).
-    Only one suit can reach 5 of 8, hence the un-inclusion-excluded 4x.
-    """
+    """P(best playable hand is exactly High Card): no pair/straight/flush.
+    Factorises over 8 distinct ranks: (rank sets missing every window) x
+    (suit assignments with no suit >= 5)."""
     no_straight_sets = sum(
         1
         for s in combinations(_RANKS, 8)

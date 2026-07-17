@@ -15,10 +15,8 @@ from balatro_sim.evaluator import (
 
 T = HandType
 
-# (cards, expected type). Duplicated cards appear only in the
-# modified-deck cases at the bottom.
+# (cards, expected type); duplicated cards only in the modified-deck cases.
 CASES = [
-    # high card
     ("AS", T.HIGH_CARD),
     ("2C", T.HIGH_CARD),
     ("AS KH", T.HIGH_CARD),
@@ -26,7 +24,6 @@ CASES = [
     ("2S 3H 4D 5C", T.HIGH_CARD),        # 4-card straight-shape: not a straight
     ("JS QH KD AC 2S", T.HIGH_CARD),     # no wraparound
     ("2H 7H 9H JH", T.HIGH_CARD),        # 4 of one suit: not a flush
-    # pair / two pair / trips
     ("AS AH", T.PAIR),
     ("2S 2C 9D", T.PAIR),
     ("KS KH 2C 5D 9H", T.PAIR),
@@ -35,18 +32,15 @@ CASES = [
     ("7S 7H 7D", T.THREE_OF_A_KIND),
     ("7S 7H 7D KC", T.THREE_OF_A_KIND),
     ("7S 7H 7D KC 2D", T.THREE_OF_A_KIND),
-    # straights
     ("AS 2H 3D 4C 5S", T.STRAIGHT),      # wheel
     ("2S 3H 4D 5C 6S", T.STRAIGHT),
     ("9C 10D JH QS KC", T.STRAIGHT),
-    ("10S JH QD KC AH", T.STRAIGHT),     # ace-high, mixed suits
-    # flush / full house / quads
+    ("10S JH QD KC AH", T.STRAIGHT),
     ("2H 7H 9H JH KH", T.FLUSH),
     ("3S 3H 3D 9C 9S", T.FULL_HOUSE),
     ("KS KH KD 4C 4D", T.FULL_HOUSE),
     ("5S 5H 5D 5C", T.FOUR_OF_A_KIND),
     ("5S 5H 5D 5C KD", T.FOUR_OF_A_KIND),
-    # straight flush / royal
     ("6H 7H 8H 9H 10H", T.STRAIGHT_FLUSH),
     ("AH 2H 3H 4H 5H", T.STRAIGHT_FLUSH),  # wheel SF is not royal
     ("10D JD QD KD AD", T.ROYAL_FLUSH),
@@ -121,9 +115,7 @@ class TestBestOf(unittest.TestCase):
         self.assertIs(t, T.FULL_HOUSE)
 
     def test_agrees_with_availability_floor_on_random_hands(self):
-        # best_of (subset enumeration) and the availability floor
-        # (whole-hand counting) are independent implementations of the
-        # same quantity; they must agree exactly on a vanilla deck.
+        # two independent implementations that must agree exactly on a vanilla deck
         rng = random.Random(123)
         deck = vanilla_deck()
         for _ in range(300):

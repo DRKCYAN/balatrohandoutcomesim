@@ -1,8 +1,6 @@
-"""Internal consistency of the exact-math module.
-
-The rank-multiset enumerator and the closed forms are independent
-derivations; where they overlap they must agree to the exact Fraction.
-"""
+"""Internal consistency of the exact-math module: the rank-multiset
+enumerator and the closed forms must agree to the exact Fraction where
+they overlap."""
 from __future__ import annotations
 
 import unittest
@@ -27,7 +25,6 @@ class TestExact(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertGreater(p, 0)
                 self.assertLess(p, 1)
-        # containment orderings that must hold for any correct derivation
         self.assertLessEqual(av["royal_flush"], av["straight_flush"])
         self.assertLessEqual(av["straight_flush"], av["straight"])
         self.assertLessEqual(av["straight_flush"], av["flush"])
@@ -35,14 +32,12 @@ class TestExact(unittest.TestCase):
         self.assertLessEqual(av["two_pair"], av["pair"])
         self.assertLessEqual(av["four_of_a_kind"], av["three_of_a_kind"])
         self.assertLessEqual(av["three_of_a_kind"], av["pair"])
-        # pinned exact values (6 dp) -- straight/flush availability among
-        # 8 cards; regression pins for the three derivation techniques
+        # pinned exact values (6 dp): regression pins for the three techniques
         self.assertAlmostEqual(float(av["straight"]), 0.098162, places=6)
         self.assertAlmostEqual(float(av["flush"]), 0.069640, places=6)
         self.assertAlmostEqual(float(av["pair"]), 0.887920, places=6)
 
     def test_best_high_card_below_no_pair(self):
-        # best == High Card implies no pair, so it is bounded by P(no pair)
         self.assertLess(exact.best_is_high_card(), 1 - exact.pair_or_better())
 
 

@@ -1,9 +1,6 @@
 """Visualization gates: traces cannot diverge from the engine, and the
-flip grid's counts cannot diverge from the paired estimator.
-
-Chart rendering itself is smoke-tested (files produced, non-empty) and
-skipped entirely when matplotlib is absent -- the core suite must stay
-green on a stdlib-only machine.
+flip grid's counts cannot diverge from the paired estimator. Chart
+rendering is smoke-tested and skipped when matplotlib is absent.
 """
 from __future__ import annotations
 
@@ -33,7 +30,6 @@ except ImportError:
 
 class TestTracedPlayOut(unittest.TestCase):
     def test_traced_final_equals_untraced_final(self):
-        # the trace hook must be a pure observer
         deck = vanilla_deck()
         for policy in (MadeHand(), FlushChaser()):
             for i in range(30):
@@ -66,12 +62,12 @@ class TestReplayPins(unittest.TestCase):
         replay = replay_from_shuffled(vanilla_deck(), 0, BlindDiscard(5), 1)
         doc = trace_html([replay], "blind", 1, 0)
         for needle in (
-            "Royal Flush",           # final best type
-            "Straight Flush",        # initial best type
-            "A</span><span class=\"st\">♠",  # ace of spades card
-            "card black dim",        # a discarded card
-            "card black new best",   # the drawn royal cards are also the best play
-            "blind",                 # policy name in header
+            "Royal Flush",
+            "Straight Flush",
+            "A</span><span class=\"st\">♠",
+            "card black dim",
+            "card black new best",
+            "blind",
         ):
             with self.subTest(needle=needle):
                 self.assertIn(needle, doc)
@@ -87,8 +83,6 @@ class TestReplayPins(unittest.TestCase):
                 self.assertEqual(f1.read(), f2.read())
 
     def test_replay_matches_distribution_trial(self):
-        # replay_trial(seed, i) must reproduce the same final best type
-        # the counting loop saw -- same seeding contract, same trial.
         deck = vanilla_deck()
         rep = run_distribution(deck, 50, seed=23, policy=FlushChaser(), discards=3)
         from collections import Counter

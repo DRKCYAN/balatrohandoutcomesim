@@ -1,11 +1,6 @@
-"""Exhaustive ground truth: evaluate() over all C(52,5) = 2,598,960 hands.
-
-The canonical 5-card poker frequencies are the strongest available check
-of the evaluator -- fully independent, known to the digit. Balatro's
-taxonomy matches standard poker on a vanilla deck (wheel counts, no
-wraparound), with the royal flush split out of straight flushes.
-
-Slow (~10-30s). Set BALATRO_SKIP_SLOW=1 to skip.
+"""Exhaustive ground truth: evaluate() over all C(52,5) hands against the
+canonical 5-card poker frequencies -- independent, known to the digit.
+Slow (~10-30s); set BALATRO_SKIP_SLOW=1 to skip.
 """
 from __future__ import annotations
 

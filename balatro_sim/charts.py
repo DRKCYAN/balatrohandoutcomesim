@@ -1,22 +1,7 @@
-"""matplotlib figures for simulation results (PNG, light surface).
-
-matplotlib is the project's only optional dependency: it is imported
-inside functions, so the core simulator and the default test run stay
-stdlib-only. Install with: pip install matplotlib
-
-Colour discipline (validated with the dataviz palette tooling; worst
-adjacent CVD delta-E 47.2):
-
-  - Policies are entities, so each policy owns a fixed categorical slot
-    (_POLICY_COLORS) used identically across every chart -- colour
-    follows the entity, never its position in this particular figure.
-  - The aqua/yellow slots sit below 3:1 contrast on the light surface;
-    the required relief is a table view / visible labels, provided by
-    the CLI's printed tables (same numbers as every chart) plus legends
-    and direct end-labels on the curves.
-  - The flip grid encodes *state*, not identity, so it uses the reserved
-    status colours (good/critical) plus neutral, with counts written
-    into the legend labels -- never colour alone.
+"""matplotlib figures for simulation results (PNG). matplotlib is the only
+optional dependency, imported inside functions so the core stays stdlib-
+only. Each policy owns a fixed colour slot (_POLICY_COLORS); the flip grid
+encodes state with counts in the legend, never colour alone.
 """
 from __future__ import annotations
 
@@ -30,16 +15,14 @@ from .policy import Policy
 from .scoring import Levels
 from .simulate import DistributionReport, play_out, run_distribution, trial_rng
 
-# categorical slots (light mode) -- fixed per policy, never cycled
 _POLICY_COLORS = {
-    "none": "#2a78d6",        # blue
-    "madehand": "#1baf7a",    # aqua
-    "flushchaser": "#eda100", # yellow
-    "blind": "#4a3aa7",       # violet
+    "none": "#2a78d6",
+    "madehand": "#1baf7a",
+    "flushchaser": "#eda100",
+    "blind": "#4a3aa7",
 }
 _FALLBACK_COLOR = "#898781"
 
-# chart chrome (light)
 _SURFACE = "#fcfcfb"
 _INK = "#0b0b0b"
 _INK2 = "#52514e"
@@ -47,7 +30,6 @@ _MUTED = "#898781"
 _GRID = "#e1e0d9"
 _BASELINE = "#c3c2b7"
 
-# status colours (reserved; flip grid only)
 _GOOD = "#0ca30c"
 _CRITICAL = "#d03b3b"
 
@@ -60,7 +42,7 @@ def _plt():
             "charts need matplotlib (the project's only optional dependency): "
             "pip install matplotlib"
         ) from None
-    matplotlib.use("Agg")  # file output only; no display needed
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     plt.rcParams["font.family"] = "sans-serif"
@@ -100,7 +82,7 @@ def _tail_p(report: DistributionReport, target: HandType) -> float:
 
 def distribution_chart(reports: Sequence[DistributionReport], out_path: str) -> None:
     """Best-hand-type distribution as grouped horizontal bars with 95% CI
-    whiskers, one fixed-colour series per policy."""
+    whiskers, one series per policy."""
     plt = _plt()
     shown = [
         t for t in sorted(HandType, reverse=True)
@@ -144,9 +126,10 @@ def convergence_chart(
     target: HandType,
     out_path: str,
     deck: Optional[Sequence[Card]] = None,
+    hand_size: int = 8,
 ) -> None:
     """Cumulative p_hat of best >= target vs trial count (log x) with its
-    shrinking 95% band -- the picture of SE ~ 1/sqrt(n)."""
+    shrinking 95% band."""
     plt = _plt()
     if n < 20:
         raise ValueError("convergence needs at least 20 trials")
@@ -160,7 +143,7 @@ def convergence_chart(
     for i in range(n):
         shuffled = list(deck)
         trial_rng(seed, i).shuffle(shuffled)
-        if best_of(play_out(shuffled, policy, discards))[0] >= target:
+        if best_of(play_out(shuffled, policy, discards, hand_size))[0] >= target:
             hits += 1
         if i + 1 == nxt:
             p = hits / (i + 1)
@@ -191,9 +174,10 @@ def discards_curve(
     target: HandType,
     out_path: str,
     deck: Optional[Sequence[Card]] = None,
+    hand_size: int = 8,
 ) -> None:
-    """P(best >= target) vs discard count, one fixed-colour line per
-    policy, 95% CI whiskers, direct end labels."""
+    """P(best >= target) vs discard count, one line per policy, 95% CI
+    whiskers, direct end labels."""
     plt = _plt()
     if deck is None:
         deck = vanilla_deck()
@@ -204,7 +188,8 @@ def discards_curve(
         ds = list(range(max_discards + 1))
         ps, errs = [], []
         for d in ds:
-            rep = run_distribution(deck, n, seed, policy=policy, discards=d)
+            rep = run_distribution(deck, n, seed, policy=policy, discards=d,
+                                   hand_size=hand_size)
             p = _tail_p(rep, target)
             ps.append(p)
             errs.append(1.96 * sqrt(p * (1 - p) / n))
@@ -235,13 +220,11 @@ def score_cdf(
     blind: Optional[float],
     out_path: str,
     deck: Optional[Sequence[Card]] = None,
+    hand_size: int = 8,
 ) -> None:
-    """The project's destination chart (PLAN.md section 6): the empirical
-    CDF of the best-play score, one fixed-colour curve per policy, with
-    the blind requirement as a vertical line. P(clear) is the height of
-    the gap above each curve at that line; the left tail -- the thing the
-    mean hides -- is the bottom of the plot. Log-x because scoring is
-    multiplicative."""
+    """Empirical CDF of the best-play score, one curve per policy, with the
+    blind requirement as a vertical line (P(clear) is the gap above each
+    curve there). Log-x because scoring is multiplicative."""
     plt = _plt()
     if deck is None:
         deck = vanilla_deck()
@@ -249,7 +232,8 @@ def score_cdf(
     _style(fig, ax, grid_axis="y")
     for policy in policies:
         rep = run_distribution(
-            deck, n, seed, policy=policy, discards=discards, levels=levels
+            deck, n, seed, policy=policy, discards=discards, levels=levels,
+            hand_size=hand_size,
         )
         xs = sorted(rep.scores)
         ys = [(i + 1) / n for i in range(n)]
@@ -281,16 +265,18 @@ def flip_grid(
     target: HandType,
     out_path: str,
     deck: Optional[Sequence[Card]] = None,
+    hand_size: int = 8,
 ) -> None:
-    """The CRN picture: n paired trials as a grid (row-major from top
-    left). Neutral = both arms agree, green = only B clears, red = only
-    A clears. The estimator's whole signal is the green/red imbalance."""
+    """The CRN picture: n paired trials as a grid (row-major). Neutral =
+    arms agree, green = only B clears, red = only A clears; the signal is
+    the green/red imbalance."""
     plt = _plt()
     import numpy as np
 
     if deck is None:
         deck = vanilla_deck()
-    samples = paired_samples(deck, n, seed, policy_a, policy_b, discards, at_least(target))
+    samples = paired_samples(deck, n, seed, policy_a, policy_b, discards,
+                             at_least(target), hand_size=hand_size)
     ds = [b - a for a, b in samples]
     ups = sum(1 for d in ds if d > 0)
     downs = sum(1 for d in ds if d < 0)
@@ -300,7 +286,7 @@ def flip_grid(
     se = sqrt(var_d / n)
 
     side = ceil(sqrt(n))
-    cells = np.full(side * side, 3, dtype=int)  # 3 = padding (surface)
+    cells = np.full(side * side, 3, dtype=int)
     for i, d in enumerate(ds):
         cells[i] = 0 if d == 0 else (1 if d > 0 else 2)
     grid = cells.reshape(side, side)
@@ -313,7 +299,7 @@ def flip_grid(
     _style(fig, ax, grid_axis="none")
     ax.pcolormesh(grid, cmap=cmap, vmin=0, vmax=3,
                   edgecolors=_SURFACE, linewidth=0.6)
-    ax.invert_yaxis()  # trial 0 at top left, reading order
+    ax.invert_yaxis()
     ax.set_aspect("equal")
     ax.set_xticks([])
     ax.set_yticks([])

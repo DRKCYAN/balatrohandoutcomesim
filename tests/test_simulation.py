@@ -1,15 +1,6 @@
-"""Phase 1 exit gate: the Monte Carlo run must match the hand-derived math.
-
-One 20,000-trial run under a fixed seed (deterministic, so this is a
-regression test, not a flaky one) is checked three ways:
-
-  1. zero mismatches between best_of() and the availability floor on
-     every single trial (independent implementations agreeing),
-  2. every availability estimate within 4.5 exact standard errors of
-     the exact probability,
-  3. the P(best == High Card) estimate within 4.5 SE of its exact value.
-
-Also pins down the seeding contract (bit-for-bit reproducibility).
+"""Phase 1 exit gate: a fixed-seed 20,000-trial run must match the
+hand-derived math (0 mismatches, availability and P(High Card) within
+4.5 SE of exact). Also pins the seeding contract.
 """
 from __future__ import annotations
 
@@ -61,17 +52,14 @@ class TestSimulation(unittest.TestCase):
         self.assertNotEqual(a.best_counts, c.best_counts)
 
     def test_trial_rng_stream_is_stable(self):
-        # Pin the first draws of the per-trial stream (string seeds hash via
-        # SHA-512, so these constants hold on any platform/Python build).
-        # If this ever moves, CRN pairings and every recorded result
-        # silently change meaning.
+        # Pin the per-trial stream (string seeds hash via SHA-512, so these
+        # hold on any platform); if it moves, every recorded result shifts.
         r = trial_rng(0, 0)
         self.assertEqual([r.randrange(52) for _ in range(6)],
                          [37, 43, 36, 37, 50, 6])
         d = list(range(52))
         trial_rng(42, 0).shuffle(d)
         self.assertEqual(d[:8], [35, 7, 45, 15, 36, 32, 18, 0])
-        # distinct trial indices must yield distinct streams
         self.assertNotEqual(trial_rng(0, 1).randrange(2**30),
                             trial_rng(0, 2).randrange(2**30))
 

@@ -1,23 +1,7 @@
-"""Discard policies -- PLAN.md's pi, "where intellectual honesty lives".
-
-The simulator measures build and policy jointly, so every policy here is
-stated explicitly, held fixed across comparisons, and deliberately simple
-enough to reason about. These are heuristics, not optima.
-
-Contract (PLAN.md section 7, extended minimally with discards_left):
-
-    policy.discard(hand, discards_left) -> tuple of indices into hand
-
-  - 1-5 distinct indices to throw away, or () to stop discarding.
-  - Called only while discards remain; () ends the loop for the trial.
-  - Deterministic and RNG-free. With identical shuffles this keeps
-    common-random-number pairing exact: two arms stay in lockstep until
-    a policy actually decides differently.
-  - The engine (simulate.play_out) validates returns and raises on
-    violations rather than silently clamping.
-
-All tie-breaks are by (rank, then suit index) so behaviour is fully
-deterministic and pinned by tests.
+"""Discard policies (heuristics, not optima), held fixed across comparisons.
+Contract: discard(hand, discards_left) -> a tuple of 1-5 distinct indices
+to throw away, or () to stop. Deterministic and RNG-free (CRN stays exact);
+tie-breaks by (rank, then suit index).
 """
 from __future__ import annotations
 
@@ -46,13 +30,8 @@ class NoDiscard:
 
 class BlindDiscard:
     """Validation-only: discards the first k positions regardless of content,
-    every time a discard remains.
-
-    Because the decision is content-blind, the final 8 cards are still 8
-    fixed positions of a uniformly shuffled deck, i.e. a uniform 8-card
-    subset of the 52. Its distribution must therefore match the Phase 1
-    exact math -- an end-to-end test of the replace/draw mechanics.
-    """
+    so the final hand stays a uniform subset that must match the Phase 1
+    exact math. Requires hand_size >= k."""
 
     name = "blind"
 
@@ -66,18 +45,9 @@ class BlindDiscard:
 
 
 class MadeHand:
-    """Keep made value, chase the direct improvement. Rules in order:
-
-      a. best available type >= STRAIGHT (straight/flush/full house/quads/
-         straight flush): stop.
-      b. trips available: keep the highest trips, discard the other 5.
-      c. two pair: keep the two highest pairs, discard the other 4
-         (three pairs: lowest pair goes).
-      d. pair: keep the pair plus the highest kicker, discard the other 5.
-      e. high card: keep the 3 highest ranks, discard the lowest 5.
-
-    Deliberately does not chase straights or flushes -- that contrast with
-    FlushChaser is the point (PLAN.md section 7 robustness).
+    """Keep made value, chase the direct improvement: stop at straight or
+    better; else keep the best made group (or 3 highest on high card).
+    Deliberately does not chase straights/flushes (the FlushChaser contrast).
     """
 
     name = "madehand"
@@ -114,13 +84,8 @@ class MadeHand:
 
 
 class FlushChaser:
-    """Suit-greedy. Let s* be the most-populated suit (tie: lowest suit
-    index, i.e. S > H > D > C priority):
-
-      a. >= 5 of s* (flush made): stop.
-      b. else discard up to 5 off-suit cards, lowest ranks first.
-
-    Sacrifices made pairs for flush equity by construction.
+    """Suit-greedy: chase s*, the most-populated suit (tie: lowest index).
+    Stop on a made flush, else discard up to 5 off-suit cards, lowest first.
     """
 
     name = "flushchaser"
@@ -130,7 +95,7 @@ class FlushChaser:
         suit_counts = [0, 0, 0, 0]
         for c in hand:
             suit_counts[c.suit] += 1
-        s_star = max(range(4), key=lambda s: suit_counts[s])  # first max wins ties
+        s_star = max(range(4), key=lambda s: suit_counts[s])
         if suit_counts[s_star] >= 5:
             return ()
         off = [i for i in range(n) if hand[i].suit != s_star]
@@ -138,11 +103,60 @@ class FlushChaser:
         return tuple(sorted(off[:5]))
 
 
+class RankChaser:
+    """Chase one rank-family target: stop at target-or-better, else keep the
+    top `groups` rank groups of size >= 2 (1 for pair/trips/quads, 2 for two
+    pair/full house) and discard up to 5 others, lowest first.
+    """
+
+    def __init__(self, target: HandType, name: str):
+        self.target = target
+        self.name = name
+        self.groups = 2 if target in (HandType.TWO_PAIR, HandType.FULL_HOUSE) else 1
+
+    def discard(self, hand: tuple[Card, ...], discards_left: int) -> tuple[int, ...]:
+        n = len(hand)
+        if best_from_availability(availability(hand)) >= self.target:
+            return ()
+
+        by_rank: dict[int, list[int]] = {}
+        for i, c in enumerate(hand):
+            by_rank.setdefault(c.rank, []).append(i)
+        ranked = sorted(
+            (r for r, idx in by_rank.items() if len(idx) >= 2),
+            key=lambda r: (len(by_rank[r]), r),
+            reverse=True,
+        )
+        keep = {i for r in ranked[: self.groups] for i in by_rank[r]}
+        off = [i for i in range(n) if i not in keep]
+        off.sort(key=lambda i: (hand[i].rank, hand[i].suit))
+        return tuple(sorted(off[:5]))
+
+
+class HighCardChaser:
+    """Chip-max baseline: always discard the 5 lowest by (rank, suit),
+    breaking even made hands. An honest dominated baseline.
+    """
+
+    name = "highcard"
+
+    def discard(self, hand: tuple[Card, ...], discards_left: int) -> tuple[int, ...]:
+        n = len(hand)
+        order = sorted(range(n), key=lambda i: (hand[i].rank, hand[i].suit))
+        return tuple(sorted(order[:5]))
+
+
 _REGISTRY = {
     "none": NoDiscard,
     "blind": BlindDiscard,
     "madehand": MadeHand,
     "flushchaser": FlushChaser,
+    "pairchaser": lambda: RankChaser(HandType.PAIR, "pairchaser"),
+    "twopairchaser": lambda: RankChaser(HandType.TWO_PAIR, "twopairchaser"),
+    "tripschaser": lambda: RankChaser(HandType.THREE_OF_A_KIND, "tripschaser"),
+    "fullhousechaser": lambda: RankChaser(HandType.FULL_HOUSE, "fullhousechaser"),
+    "quadchaser": lambda: RankChaser(HandType.FOUR_OF_A_KIND, "quadchaser"),
+    "highcard": HighCardChaser,
 }
 
 POLICY_NAMES = tuple(_REGISTRY)

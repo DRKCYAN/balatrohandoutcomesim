@@ -43,7 +43,11 @@ visual reports by design — no UI.
 - [x] **Phase 3 — scoring layer** (chips × mult, hand levels → P(S ≥ B);
       core scope — enhancements land with Phase 4's deck edits. Exit
       criterion is in-game confirmation: see [docs/VALIDATION.md](docs/VALIDATION.md))
-- [ ] Phase 4 — deck modifications (tarots as deck edits)
+- [x] **Phase 4 — deck modifications** (fixed configurations only:
+      remove/add/transform edits applied once, before the trial loop.
+      Modeling how a deck *reaches* a state during a run — stochastic
+      Tarot arrival, path-dependent decks — is deliberately out of scope
+      here; that second decision layer belongs to Phase 6)
 - [ ] Phase 5 — jokers (~10, mechanically diverse)
 - [ ] Phase 6 — value function / shop decisions
 
@@ -90,6 +94,27 @@ python -m balatro_sim blind --policy flushchaser --blind 600 --hands 4 --discard
 python -m balatro_sim compare --a madehand --b flushchaser --stat clear --blind 600
 ```
 
+### Run resources (hands, discards, hand size)
+
+The three per-blind resources are all run variables. `--hands` (blind trials
+only) and `--discards` (everywhere) default to the base game's 4 and 3;
+`--hand-size` defaults to 8, the number of cards held in hand. All three are
+accepted by every simulating command (dist, `blind`, `compare`, `trace`,
+`plot`) and hold fixed across a comparison's arms, so CRN pairing is
+unaffected.
+
+```
+python -m balatro_sim --hand-size 10 --trials 20000
+python -m balatro_sim blind --policy flushchaser --blind 600 --hands 3 --discards 2 --hand-size 9
+python -m balatro_sim compare --a none --b flushchaser --stat clear --blind 600 --hand-size 10
+```
+
+A larger hand raises availability of every class (more cards seen) — e.g.
+P(flush available, no discards) climbs from ≈0.069 at 8 to ≈0.23 at 10. Like
+`--mod`, a non-default hand size leaves the closed form behind: the exact-math
+columns are derived for **8 dealt from the vanilla 52**, so they switch off for
+any other hand size (the per-trial best-vs-availability cross-check still runs).
+
 ### Policies (π)
 
 Deterministic, RNG-free, pinned by tests — the sim measures build and policy
@@ -101,9 +126,48 @@ jointly, so π is part of the measured object (PLAN.md §7):
   does not chase draws.
 - `flushchaser` — keeps the most-populated suit, discards up to 5 off-suit
   (lowest first) until a flush lands.
+- `pairchaser` / `twopairchaser` / `tripschaser` / `fullhousechaser` /
+  `quadchaser` — chase one rank-family target: stop once the best available
+  type is ≥ the target, otherwise keep the largest rank group(s) (two groups
+  for two pair / full house, ties to the higher rank) and discard up to 5 of
+  the rest, lowest first. Stop-at-target-or-better means a pairchaser stands
+  pat on a dealt flush, while a quadchaser will break one to keep chasing —
+  the same sacrifice FlushChaser makes with pairs.
+- `highcard` — chip-max floor: always discards the 5 lowest cards (it will
+  break made hands, even a dealt royal flush, and burns the shared blind
+  budget on hand 1). A deliberately dominated baseline.
 - `blind` — discards the first k positions sight-unseen (validation only:
   content-blind discarding leaves the final 8 uniform, so its distribution
   must still match the exact math).
+
+### Modified decks (Phase 4)
+
+Every simulating command (dist, `blind`, `compare`, `trace`, `plot`) takes
+repeatable `--mod "verb args"` deck edits, applied **in order** before the
+trial loop (order matters: convert-then-remove ≠ remove-then-convert):
+
+```
+python -m balatro_sim --mod "remove 2 3" --trials 20000
+python -m balatro_sim blind --policy flushchaser --blind 600 --mod "remove 2 3"
+python -m balatro_sim blind --policy flushchaser --blind 600 --mod "transform C>H"
+python -m balatro_sim compare --a madehand --b flushchaser --stat clear --blind 600 --mod "remove 2 3"
+```
+
+Three primitives: `remove` (deck thinning), `add` (duplicates legal —
+Balatro decks are multisets; this makes Five of a Kind / Flush House /
+Flush Five reachable), `transform FROM>TO` (suit conversion `KC>KH` or
+`C>H`, rank bumps `7>8`). Selectors are an exact card (`2S`), a rank
+(`2`–`10`, `J`…`A`), or a suit (`S H D C`), and match **all** copies;
+matching nothing is an error, never a silent no-op. This models a Tarot's
+*effect* as a deck edit — it does not model named Tarots, their draw odds,
+or how a deck evolves mid-run (Phase 6 scope). `compare --mod` plays both
+arms on the same modified deck, so the CRN pairing still holds.
+
+Caveats: the exact-math validation columns apply to the true vanilla 52
+only and switch off for modified decks (the per-trial best-vs-availability
+cross-check still runs everywhere); secret hands sit above what the
+availability flags can see, so trials whose best hand is one are exempt
+from that check.
 
 ### Visualize
 

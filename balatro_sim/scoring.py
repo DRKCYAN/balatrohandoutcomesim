@@ -1,31 +1,8 @@
-"""Core scoring: chips x mult with hand levels. No enhancements (Phase 4),
-no jokers (Phase 5), pure integer arithmetic.
-
-    S = (base_chips(type, level) + sum of scoring-card chip values)
-        * base_mult(type, level)
-
-Scoring cards: only the cards forming the hand contribute their chip
-values (kickers never score; the Splash joker that changes this is Phase
-5 material): High Card scores its single highest card; pair-family hands
-score the matched-rank cards; every 5-card hand (straight, flush, full
-house, straight flush, flush house, flush five) scores all five.
-
-Levels: each hand type has a level (default 1). A level above 1 adds the
-hand's planet-card increment per level. Royal Flush shares Straight
-Flush's level and increment (one planet, Neptune, levels both).
-
-LEVEL_INCREMENTS source: the Balatro wiki planet-card table
-(balatrogame.fandom.com/wiki/Planet_Cards, balatrowiki.org/w/Planet_Cards,
-retrieved 2026-07-13), cross-checked against each other. Every value is
-additionally listed as "pending in-game confirmation" in
-docs/VALIDATION.md -- constants transcribed from wikis are exactly the
-kind of input PLAN.md section 9 exists to catch.
-
-best_play() is the optimal greedy player: the highest-SCORING subset,
-which is not the highest-TYPE subset -- a junk full house (40+12)x4=208
-loses to an ace-high flush (35+50)x4=340 even at level 1. The type-max
-best_of() in evaluator.py keeps its capability semantics for the
-Phase 1/2 distribution reports; the two are related by tests.
+"""Core scoring: S = (base_chips(type, level) + scoring-card chips)
+* base_mult(type, level). Only the cards forming the hand score (kickers
+never do). Levels above 1 add the planet-card increment (LEVEL_INCREMENTS,
+from the Balatro wiki -- see docs/VALIDATION.md). best_play() is the
+optimal greedy player: the highest-SCORING subset, not the highest-TYPE.
 """
 from __future__ import annotations
 
@@ -39,19 +16,19 @@ Levels = Mapping[HandType, int]
 
 # (+chips, +mult) per level above 1 -- the planet cards.
 LEVEL_INCREMENTS: dict[HandType, tuple[int, int]] = {
-    HandType.HIGH_CARD: (10, 1),        # Pluto
-    HandType.PAIR: (15, 1),             # Mercury
-    HandType.TWO_PAIR: (20, 1),         # Uranus
-    HandType.THREE_OF_A_KIND: (20, 2),  # Venus
-    HandType.STRAIGHT: (30, 3),         # Saturn
-    HandType.FLUSH: (15, 2),            # Jupiter
-    HandType.FULL_HOUSE: (25, 2),       # Earth
-    HandType.FOUR_OF_A_KIND: (30, 3),   # Mars
-    HandType.STRAIGHT_FLUSH: (40, 4),   # Neptune
+    HandType.HIGH_CARD: (10, 1),
+    HandType.PAIR: (15, 1),
+    HandType.TWO_PAIR: (20, 1),
+    HandType.THREE_OF_A_KIND: (20, 2),
+    HandType.STRAIGHT: (30, 3),
+    HandType.FLUSH: (15, 2),
+    HandType.FULL_HOUSE: (25, 2),
+    HandType.FOUR_OF_A_KIND: (30, 3),
+    HandType.STRAIGHT_FLUSH: (40, 4),
     HandType.ROYAL_FLUSH: (40, 4),      # shares Neptune
-    HandType.FIVE_OF_A_KIND: (35, 3),   # Planet X
-    HandType.FLUSH_HOUSE: (40, 4),      # Ceres
-    HandType.FLUSH_FIVE: (50, 3),       # Eris
+    HandType.FIVE_OF_A_KIND: (35, 3),
+    HandType.FLUSH_HOUSE: (40, 4),
+    HandType.FLUSH_FIVE: (50, 3),
 }
 
 
@@ -76,7 +53,6 @@ def hand_base_at(t: HandType, level: int) -> tuple[int, int]:
 def scoring_cards(hand_type: HandType, played: Sequence[Card]) -> tuple[Card, ...]:
     """The played cards that contribute chip values."""
     if hand_type is HandType.HIGH_CARD:
-        # ranks are necessarily distinct (a duplicate would be a pair+)
         return (max(played, key=lambda c: c.rank),)
     rank_counts: dict[int, int] = {}
     for c in played:
@@ -98,7 +74,6 @@ def scoring_cards(hand_type: HandType, played: Sequence[Card]) -> tuple[Card, ..
     if hand_type is HandType.TWO_PAIR:
         pair_ranks = {r for r, n in rank_counts.items() if n == 2}
         return tuple(c for c in played if c.rank in pair_ranks)
-    # every remaining type is a 5-card hand: all played cards score
     return tuple(played)
 
 
@@ -112,8 +87,7 @@ def score(played: Sequence[Card], levels: Optional[Levels] = None) -> int:
 
 @dataclass(frozen=True)
 class PlayResult:
-    """Outcome of one played hand. score is None when scoring was not
-    requested (levels absent) -- type-only statistics still work."""
+    """Outcome of one played hand. score is None when levels were absent."""
 
     hand_type: HandType
     played: tuple[Card, ...]
@@ -122,10 +96,7 @@ class PlayResult:
 
 def best_play(cards: Sequence[Card], levels: Optional[Levels] = None) -> PlayResult:
     """The highest-scoring play among all 1-5 card subsets (the optimal
-    greedy player). Naive enumeration, per the best_of contract: correct
-    and fast enough, do not optimize. Ties: higher hand type, then first
-    subset in enumeration order.
-    """
+    greedy player). Ties: higher hand type, then enumeration order."""
     best_score = -1
     best_t = HandType.HIGH_CARD
     best_cards: tuple[Card, ...] = ()

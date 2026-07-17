@@ -1,10 +1,6 @@
-"""Blind-trial gates: the estimand correction (4 hands, shared discards).
-
-The pinned walkthrough is computed by hand in comments. The load-bearing
-gate is hands=1 equivalence: a one-hand blind must reproduce the
-single-hand engine trial-for-trial for EVERY policy (including the
-position-dependent BlindDiscard), because both use the identical
-ascending-position replacement rule.
+"""Blind-trial gates (4 hands, shared discards). Load-bearing: hands=1
+equivalence -- a one-hand blind must reproduce the single-hand engine
+trial-for-trial for every policy (same replacement rule).
 """
 from __future__ import annotations
 
@@ -66,7 +62,6 @@ class TestShrinkingDeck(unittest.TestCase):
 
 class TestSingleHandEquivalence(unittest.TestCase):
     def test_one_hand_blind_equals_single_hand_engine(self):
-        # exact per-trial equality, all policies, shared seeds
         deck = vanilla_deck()
         n, seed = 300, 17
         for policy in (NoDiscard(), MadeHand(), FlushChaser(), BlindDiscard(5)):

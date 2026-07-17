@@ -1,15 +1,7 @@
-"""Validation gates for the discard/redraw mechanics (Phase 2).
-
-The zero-discard case had global closed-form truth; with a reactive
-policy that is gone, so the gates are:
-
-  1. pinned replacement mechanics on a known deck order,
-  2. NoDiscard identical to the Phase 1 loop trial-for-trial,
-  3. blind (content-ignorant) discarding leaves the final 8 uniform, so
-     it must still match the Phase 1 exact math,
-  4. conditional single-discard states are plain hypergeometric draws
-     and must match exact_discard.py,
-  5. more discards monotonically help the chased statistic.
+"""Validation gates for the discard/redraw mechanics (Phase 2): pinned
+replacement mechanics, NoDiscard == Phase 1, blind discarding still
+matching the exact math, conditional states vs exact_discard.py, and
+monotonicity in discards.
 """
 from __future__ import annotations
 
@@ -46,7 +38,7 @@ class TestPlayOutMechanics(unittest.TestCase):
         self.assertEqual(deck, before)
 
     def test_policy_stop_is_honoured(self):
-        first8 = hand("2S 3H 4D 5C 6S 9H JD KC")  # straight available
+        first8 = hand("2S 3H 4D 5C 6S 9H JD KC")
         rest = [c for c in vanilla_deck() if c not in set(first8)]
         deck = list(first8) + rest
         self.assertEqual(play_out(deck, MadeHand(), discards=3), first8)

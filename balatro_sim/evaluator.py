@@ -1,30 +1,10 @@
 """Balatro poker-hand classification. Pure, deterministic, zero game state.
 
-Balatro's taxonomy, ordered by base score (chips x mult at level 1, see
-HAND_BASE). Rules that matter:
-
-  - A played hand is 1-5 cards. Straights and flushes require exactly 5.
-  - Straights: ace plays high (10-J-Q-K-A) or low (A-2-3-4-5), never
-    wraps (Q-K-A-2-3 is nothing).
-  - Secret hands (Five of a Kind, Flush House, Flush Five) need duplicate
-    ranks/cards, so they are unreachable in a vanilla 52-card deck but the
-    evaluator supports them because Phase 4 decks may contain duplicates.
-  - Royal Flush is kept as a distinct type so distributions can report it;
-    it shares Straight Flush's base score and level (Phase 3 treats them
-    alike).
-  - Rule-bending jokers (Four Fingers, Shortcut) are out of scope; this
-    is the vanilla rule set.
-
-evaluate() classifies played cards. best_of() finds the best playable
-hand among all 1-5 card subsets of a dealt hand (218 subsets for 8
-cards) by naive enumeration, per the plan: correct and fast enough, do
-not optimize.
-
-availability() is a deliberately independent implementation (whole-hand
-counting, no subset enumeration). For duplicate-free decks the best
-playable type is exactly the best available class, so
-best_from_availability() must agree with best_of() on every trial --
-the simulator's per-trial cross-check.
+evaluate() classifies 1-5 played cards; best_of() finds the best playable
+subset by naive enumeration. availability() is an independent whole-hand
+implementation, so best_from_availability() must agree with best_of() on
+duplicate-free decks (the per-trial cross-check). Secret hands need
+duplicates -- vanilla-unreachable but supported for Phase 4.
 """
 from __future__ import annotations
 
@@ -48,9 +28,9 @@ class HandType(IntEnum):
     FOUR_OF_A_KIND = 8
     STRAIGHT_FLUSH = 9
     ROYAL_FLUSH = 10
-    FIVE_OF_A_KIND = 11  # modified decks only
-    FLUSH_HOUSE = 12     # modified decks only
-    FLUSH_FIVE = 13      # modified decks only
+    FIVE_OF_A_KIND = 11
+    FLUSH_HOUSE = 12
+    FLUSH_FIVE = 13
 
     @property
     def display(self) -> str:
@@ -73,7 +53,6 @@ _DISPLAY = {
     HandType.FLUSH_FIVE: "Flush Five",
 }
 
-# Level-1 base (chips, mult). Reference for Phase 3; documents the enum order.
 HAND_BASE = {
     HandType.HIGH_CARD: (5, 1),
     HandType.PAIR: (10, 2),
@@ -99,12 +78,8 @@ _WHEEL = WINDOWS[0]
 
 
 def evaluate(cards: Sequence[Card]) -> HandType:
-    """Classify 1-5 played cards. Duplicate cards allowed (modified decks).
-
-    Checks run in descending base-score order, so for ambiguous multisets
-    (possible only with duplicates, e.g. 5S 5S 5S 2S 7S) the highest-value
-    reading wins, matching the game.
-    """
+    """Classify 1-5 played cards (duplicates allowed). Checks run in
+    descending base-score order, so the highest-value reading wins."""
     n = len(cards)
     if not 1 <= n <= 5:
         raise ValueError(f"a played hand is 1-5 cards, got {n}")
@@ -156,13 +131,8 @@ def _subset_indices(n: int) -> tuple[tuple[int, ...], ...]:
 
 
 def best_of(cards: Sequence[Card]) -> tuple[HandType, tuple[Card, ...]]:
-    """Best playable hand among all 1-5 card subsets of `cards`.
-
-    Tiebreak within a hand type is total chip value of the subset --
-    provisional until Phase 3 defines real hand strength (only the type
-    is consumed in Phase 1). Deterministic: first subset in enumeration
-    order wins remaining ties.
-    """
+    """Best playable hand among all 1-5 card subsets. Tiebreak within a type
+    is total chip value, then first subset in enumeration order."""
     best_t: HandType | None = None
     best_chips = -1
     best_cards: tuple[Card, ...] = ()
@@ -179,13 +149,9 @@ def best_of(cards: Sequence[Card]) -> tuple[HandType, tuple[Card, ...]]:
 
 
 def availability(cards: Sequence[Card]) -> dict[str, bool]:
-    """Which hand classes exist anywhere in `cards` (typically the 8 dealt).
-
-    Computed by single-pass counting over the whole hand -- an
-    implementation independent of evaluate()/best_of(), used to
-    cross-check them and to compare against exact.py. The flags describe
-    playable classes for duplicate-free decks (secret hands excluded).
-    """
+    """Which hand classes exist anywhere in `cards`, by single-pass counting
+    independent of evaluate()/best_of() (the cross-check). Flags describe
+    duplicate-free decks."""
     rank_counts: dict[int, int] = {}
     suit_ranks: dict[int, set[int]] = {0: set(), 1: set(), 2: set(), 3: set()}
     suit_counts = [0, 0, 0, 0]
@@ -223,13 +189,8 @@ _FLOORS = (
 
 
 def best_from_availability(avail: dict[str, bool]) -> HandType:
-    """Best hand type implied by availability flags.
-
-    For duplicate-free decks this equals best_of()'s type exactly:
-    each flag guarantees a playable subset of at least that type, and
-    any playable type raises its own flag. Divergence on any trial is
-    a bug in one of the two implementations.
-    """
+    """Best hand type implied by availability flags. For duplicate-free
+    decks this equals best_of()'s type exactly; divergence is a bug."""
     for key, t in _FLOORS:
         if avail[key]:
             return t

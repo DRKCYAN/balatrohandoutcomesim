@@ -1,15 +1,7 @@
-"""HTML trial replay: watch individual trials think.
-
-Writes ONE self-contained HTML file (inline CSS, no JS, no external
-requests) showing, per trial: the dealt 8 as drawn cards, each discard
-round (thrown cards dimmed and struck, replacements highlighted), and
-the final hand with the best playable cards outlined.
-
-This is a validation instrument as much as a viewer: a human scanning
-twenty replays catches "why did it keep that card" bugs that no test
-encoded. Because trials are seeded, the replay re-runs the *identical*
-trial the statistics counted -- play_out records its own steps via the
-trace hook, so what you see cannot diverge from what was measured.
+"""HTML trial replay: writes one self-contained HTML file (inline CSS, no
+JS) showing, per trial, the dealt hand, each discard round, and the final
+best play. Trials are seeded, so the replay re-runs the exact trial the
+statistics counted (via play_out's trace hook).
 """
 from __future__ import annotations
 
@@ -22,8 +14,8 @@ from .evaluator import HandType, best_of
 from .policy import Policy
 from .simulate import DiscardStep, play_out, trial_rng
 
-_SUIT_GLYPHS = "♠♥♦♣"  # spade heart diamond club
-_RED_SUITS = (1, 2)  # hearts, diamonds
+_SUIT_GLYPHS = "♠♥♦♣"
+_RED_SUITS = (1, 2)
 _RANK_NAMES = {11: "J", 12: "Q", 13: "K", 14: "A"}
 
 
@@ -39,12 +31,13 @@ class TrialReplay:
 
 
 def replay_from_shuffled(
-    shuffled: Sequence[Card], index: int, policy: Policy, discards: int
+    shuffled: Sequence[Card], index: int, policy: Policy, discards: int,
+    hand_size: int = 8,
 ) -> TrialReplay:
     """Replay one already-shuffled deck order (the testable core)."""
     steps: list[DiscardStep] = []
-    final = play_out(shuffled, policy, discards, trace=steps)
-    initial = tuple(shuffled[:8])
+    final = play_out(shuffled, policy, discards, hand_size, trace=steps)
+    initial = tuple(shuffled[:hand_size])
     initial_best, _ = best_of(initial)
     final_best, best_cards = best_of(final)
     return TrialReplay(
@@ -53,16 +46,15 @@ def replay_from_shuffled(
 
 
 def replay_trial(
-    deck: Sequence[Card], seed: int, i: int, policy: Policy, discards: int
+    deck: Sequence[Card], seed: int, i: int, policy: Policy, discards: int,
+    hand_size: int = 8,
 ) -> TrialReplay:
-    """Replay trial i of the (deck, seed) stream -- the exact same trial
-    run_distribution counted, reproduced from the seeding contract."""
+    """Replay trial i of the (deck, seed) stream -- the same trial
+    run_distribution counted."""
     shuffled = list(deck)
     trial_rng(seed, i).shuffle(shuffled)
-    return replay_from_shuffled(shuffled, i, policy, discards)
+    return replay_from_shuffled(shuffled, i, policy, discards, hand_size)
 
-
-# ------------------------------------------------------------------ rendering
 
 _CSS = """
 :root { color-scheme: light; }
@@ -162,16 +154,18 @@ def _trial_html(r: TrialReplay) -> str:
 
 
 def trace_html(
-    replays: Sequence[TrialReplay], policy_name: str, discards: int, seed: int
+    replays: Sequence[TrialReplay], policy_name: str, discards: int, seed: int,
+    hand_size: int = 8,
 ) -> str:
     """The full document as a string (pure; pinned by tests)."""
+    size_note = "" if hand_size == 8 else f"hand_size={hand_size}, "
     body = [
         "<!doctype html><html><head><meta charset=\"utf-8\">",
         f"<title>balatro_sim trace: {html.escape(policy_name)}</title>",
         f"<style>{_CSS}</style></head><body>",
         "<h1>Trial replay</h1>",
         f'<div class="meta">policy=<b>{html.escape(policy_name)}</b>, '
-        f"discards={discards}, seed={seed}, trials 0–{len(replays) - 1}, "
+        f"discards={discards}, {size_note}seed={seed}, trials 0–{len(replays) - 1}, "
         "vanilla deck</div>",
     ]
     body.extend(_trial_html(r) for r in replays)
@@ -196,11 +190,15 @@ def render_trace_html(
     policy: Policy,
     discards: int,
     out_path: str,
+    hand_size: int = 8,
 ) -> None:
     """Replay trials 0..n_trials-1 and write the self-contained HTML file."""
     if deck is None:
         deck = vanilla_deck()
-    replays = [replay_trial(deck, seed, i, policy, discards) for i in range(n_trials)]
-    doc = trace_html(replays, policy.name, discards, seed)
+    replays = [
+        replay_trial(deck, seed, i, policy, discards, hand_size)
+        for i in range(n_trials)
+    ]
+    doc = trace_html(replays, policy.name, discards, seed, hand_size)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(doc)

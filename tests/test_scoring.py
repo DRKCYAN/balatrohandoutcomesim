@@ -1,10 +1,6 @@
 """Scoring gates: hand-computed pins, scoring-card selection, level math,
-score-max vs type-max divergence, and coherence across the three code
-paths that produce scores (score / best_play / run_distribution /
-paired_experiment).
-
-Every pinned number is derived by hand in a comment; docs/VALIDATION.md
-carries the same scenarios to the real game.
+score-max vs type-max divergence, and coherence across the code paths that
+produce scores. Every pinned number is derived by hand in a comment.
 """
 from __future__ import annotations
 
@@ -29,7 +25,6 @@ T = HandType
 
 
 class TestScorePins(unittest.TestCase):
-    # (cards, levels, expected) -- expected worked by hand in the comment
     def test_pinned_scores(self):
         cases = [
             # (5 + 11) x 1
@@ -70,7 +65,6 @@ class TestScoringCards(unittest.TestCase):
         self.assertEqual(self._sc("7S 7H 7D KC QD"), hand("7S 7H 7D"))
         self.assertEqual(self._sc("5S 5H 5D 5C KD"), hand("5S 5H 5D 5C"))
         self.assertEqual(self._sc("2S 5D 9C JH KS"), hand("KS"))
-        # every 5-card hand scores all five
         for text in ("2S 3H 4D 5C 6S", "KH QH JH 9H 7H", "3S 3H 3D 9C 9S"):
             with self.subTest(text=text):
                 self.assertEqual(len(self._sc(text)), 5)
@@ -166,7 +160,7 @@ class TestExperimentScoreCoherence(unittest.TestCase):
         with self.assertRaises(ValueError):
             paired_experiment(
                 vanilla_deck(), 10, 0, NoDiscard(), NoDiscard(), 0,
-                statistic=score_at_least(100),  # no levels= -> no scores
+                statistic=score_at_least(100),
             )
 
 
