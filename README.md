@@ -1,4 +1,4 @@
-If you are an admissions officer or someone checking my resume, read this. If your checking this purely for the love of the game scroll down a bit.
+If you are an admissions officer or someone checking my resume, read this. If your checking this purely for the love of the game scroll down a bit. Also note that this readme is updated frequently with changes
 
 Balatro is a roguelike deckbuilder where you use poker hands and wild Joker modifiers to hit increasingly massive score requirements. The entire game is a high-stakes balancing act of risk and reward, forcing you to constantly gamble your hard-earned cash on unpredictable booster packs and destructive abilities. You must boldly manipulate your deck and wager on game-breaking synergies to survive, knowing that one wrong bet or bad draw could instantly end your run.
 
@@ -10,15 +10,16 @@ Here is the math I used:
 3. Standard error shrinks as 1/√n — so 4x the trials buys you only 2x the precision. I use Wilson score intervals rather than the textbook normal approximation, because win rates near 0 or 1 break the formula.
 4. I check my work using combinatorics. The five-card hand probabilities are exactly computable (a flush is 0.198% — derived by hand, not simulated). If the simulator doesn't reproduce them within the interval given enougn trials, the simulator is wrong. My goal is to scale this project so that it can include more complex situtiations to the point where combinatrics is less efficient than simply running a few 100k to million trials.
 
-I used claude code to code it, but the logic, variabales, and math is all done by me. I also built an AI agent so that after a simulation is run, it automatically calculates the combinatrics and tells me how far the simulation was off mathematically.
+I used claude for execution and when stuck, but the logic, variabales, and math is all done by me. I also built an AI agent so that after a simulation is run, it automatically calculates the combinatrics and tells me how far the simulation was off mathematically.
 
-Here are my results so far(1 hand 3 discards so this doesn't treat the other hands like discards contrary to normal balatro gameplay. I'll fix this later):
+Here are some cool results so far(Note that this doesn't take into account modded cards and jokers):
 - P(straight even available in 8 cards) is only 0.098(also confirmed by exact math). This is lower than intuition says and surprised me.
 - FlushChaser turns 7% flushes into 92%, and multiplies straight/royal flushes ~23× as a side effect.
 - MadeHand quietly converts ~52% of hands into full houses.
-- Against blind 600 at level 1, MadeHand clears 2.8% vs FlushChaser's 1.9% (Δ̂ = −0.0089 ± 0.0007, n = 100k) — the flush wall tops out at ~340 and never reaches 600; clears come from quads and straight flushes. The 92%-flush policy loses on the objective that matters(This genuinely surprised me especially since this specific simulation has only 1 hand). 
+- Against blind 600 at level 1, MadeHand clears 2.8% vs FlushChaser's 1.9% (Δ̂ = −0.0089 ± 0.0007, n = 100k) — the flush wall tops out at ~340 and never reaches 600; clears come from quads and straight flushes. The 92%-flush policy loses on the objective that matters(This genuinely surprised me especially since this specific simulation has only 1 hand).
+- I found that many times even though the mean score was higher for certain policies, the blind clear rate was lower. This is probably because the polciies with the higher means were less consistent but achieved high scores that were useless(quadchaser) while other such as madeHand had lower means but more consistency.
 
-Also I used mathplotlib to visualize the data
+I am also working on using mathplotlib to visualize data.
 
 
 
@@ -38,7 +39,7 @@ visual reports by design — no UI.
 
 - [x] **Phase 1 — hand-type distribution** (evaluator, `best_of`, seeded trial
       loop; validated, see below)
-- [x] **Phase 2 — discards + policy π** (two contrasting heuristics, paired
+- [x] **Phase 2 — discards + policy** (two contrasting heuristics, paired
       CRN comparisons; validated, see below)
 - [x] **Phase 3 — scoring layer** (chips × mult, hand levels → P(S ≥ B);
       core scope — enhancements land with Phase 4's deck edits. Exit
@@ -48,11 +49,11 @@ visual reports by design — no UI.
       Modeling how a deck *reaches* a state during a run — stochastic
       Tarot arrival, path-dependent decks — is deliberately out of scope
       here; that second decision layer belongs to Phase 6)
-- [ ] Phase 5 — jokers (~10, mechanically diverse)
-- [ ] Phase 6 — value function / shop decisions
+- [ ] Phase 5 — jokers (~10, mechanically diverse) I am looking for existing code about jokers.
+- [ ] Phase 6 — value function / shop decisions This is very ambitious and it should be seen as a step 20. 
 
 ## Run
-
+Note: you can change discards and hands. I also haven't found a way to code straights and straight flushes in yet so that is currently not a feature. Other poker hands to exist however such as pairchases and quadchaser
 ```
 python -m balatro_sim --trials 100000 --seed 42
 python -m balatro_sim --policy flushchaser --discards 3 --trials 20000
