@@ -12,7 +12,7 @@ Here is the math I used:
 
 I used claude for execution and when stuck, but the logic, variabales, and math is all done by me. I also built an AI agent so that after a simulation is run, it automatically calculates the combinatrics and tells me how far the simulation was off mathematically.
 
-Here are some cool results so far(Note that this doesn't take into account modded cards and jokers):
+Here are some cool results so far(These results are from before I added jokers and modded cards):
 - P(straight even available in 8 cards) is only 0.098(also confirmed by exact math). This is lower than intuition says and surprised me.
 - FlushChaser turns 7% flushes into 92%, and multiplies straight/royal flushes ~23× as a side effect.
 - MadeHand quietly converts ~52% of hands into full houses.
